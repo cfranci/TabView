@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "TabView",
+  "version": "1.0",
+  "description": "Visual tab manager — see all tabs as previews, reorder, and close them.",
+  "permissions": ["tabs", "activeTab", "debugger"],
+  "action": {
+    "default_title": "Open TabView"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "128": "icon128.png"
+  }
+}
