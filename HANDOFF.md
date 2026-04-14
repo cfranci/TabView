@@ -1,28 +1,32 @@
-# Handoff — TabView
-*Generated: 2026-03-23*
+# Handoff -- TabView
+*Updated: 2026-04-14*
 
 ## Last Working On
-Chrome extension for visual tab management — grid of live tab previews with close and reorder.
+v2.0 upgrade -- added RAM monitoring, multi-select, tab grouping, discard, and window merging.
 
 ## Status
-v1.0, functional. Uses Chrome debugger protocol (`Page.captureScreenshot`) to capture tab previews without switching tabs. Features:
-- Auto-captures all tab previews on open (no tab jumping)
-- Drag-and-drop to reorder tabs (actually moves them in Chrome)
-- Close tabs from the grid with animation
-- Click preview or title to switch to that tab
-- Live updates when tabs are opened/closed/moved
-- Dark theme UI
+v2.0, functional. All v1 features preserved. New in v2:
+- Per-tab RAM display via `chrome.processes` API (auto-refreshes every 10s)
+- Checkbox multi-select on each tab card
+- Floating action bar when tabs are selected (Group / Discard / Close)
+- Tab grouping with Chrome's native tab groups API
+- Discard tabs to free RAM without closing them
+- Merge all Chrome windows into one
+- High-memory tabs (300+ MB) highlighted with orange badge
+- Total Chrome memory shown in header
 
 ## Key Files
-- `manifest.json` — Manifest V3, permissions: tabs, activeTab, debugger
-- `background.js` — Service worker: handles extension icon click, debugger-based tab capture
-- `manager.html/js/css` — The tab manager page (opens in a new tab)
-- `icon128.png` — Generated 128x128 extension icon
+- `manifest.json` -- Manifest V3, permissions: tabs, activeTab, debugger, processes, tabGroups
+- `background.js` -- Service worker: handles extension icon click, debugger-based tab capture
+- `manager.html/js/css` -- The tab manager page (opens in a new tab)
+- `icon128.png` -- 128x128 extension icon
 
 ## Key Commands
 Load as unpacked extension in `chrome://extensions` with Developer mode enabled.
 
 ## Resume Notes
-- The debugger permission causes a brief yellow "debugging" banner on tabs during capture — unavoidable but much better UX than switching tabs
+- The debugger permission causes a brief yellow "debugging" banner on tabs during capture -- unavoidable but better UX than switching tabs
 - `chrome://` and other restricted URLs can't be captured (debugger can't attach)
-- Could add: search/filter tabs, tab grouping support, keyboard shortcuts, pinned tab indicators
+- `chrome.processes` API may not be available in all Chromium forks. Code degrades gracefully -- RAM badges just stay empty.
+- Discarded tabs show 0 MB until the user navigates back to them (Chrome unloads them from memory)
+- Could add: search/filter tabs, keyboard shortcuts, pinned tab indicators, sort by RAM usage

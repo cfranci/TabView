@@ -28,7 +28,7 @@ header h1 {
 .controls {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
 }
 
 #tabCount {
@@ -36,7 +36,7 @@ header h1 {
   color: #888;
 }
 
-#captureAll {
+.controls button {
   padding: 6px 14px;
   border-radius: 6px;
   border: 1px solid #333;
@@ -46,8 +46,8 @@ header h1 {
   cursor: pointer;
   transition: background 0.15s;
 }
-#captureAll:hover { background: #2a2a2a; }
-#captureAll:disabled { opacity: 0.4; cursor: default; }
+.controls button:hover { background: #2a2a2a; }
+.controls button:disabled { opacity: 0.4; cursor: default; }
 
 /* Grid */
 #grid {
@@ -55,6 +55,7 @@ header h1 {
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
   padding: 24px 28px;
+  padding-bottom: 100px;
 }
 
 /* Card */
@@ -72,6 +73,14 @@ header h1 {
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
+.tab-card.selected {
+  border-color: #5b8def;
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.25);
+}
+.tab-card.selected:hover {
+  border-color: #5b8def;
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.25), 0 8px 24px rgba(0,0,0,0.4);
+}
 .tab-card.dragging {
   opacity: 0.4;
   transform: scale(0.95);
@@ -79,6 +88,24 @@ header h1 {
 .tab-card.drag-over {
   border-color: #5b8def;
   box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.3);
+}
+
+/* Checkbox */
+.tab-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 18px;
+  height: 18px;
+  z-index: 11;
+  cursor: pointer;
+  accent-color: #5b8def;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.tab-card:hover .tab-checkbox,
+.tab-card.selected .tab-checkbox {
+  opacity: 1;
 }
 
 /* Preview area */
@@ -112,18 +139,6 @@ header h1 {
   opacity: 0.5;
 }
 
-/* Capturing indicator */
-.preview .capturing {
-  position: absolute;
-  inset: 0;
-  background: rgba(0,0,0,0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: #888;
-}
-
 /* Info bar */
 .info {
   padding: 10px 12px;
@@ -150,8 +165,25 @@ header h1 {
 .info .title:hover {
   color: #5b8def;
 }
-.info .url {
+
+/* RAM badge */
+.ram-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: #666;
+  background: #222;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.ram-badge:empty {
   display: none;
+}
+.ram-badge.ram-high {
+  color: #e8a040;
+  background: rgba(232, 160, 64, 0.12);
 }
 
 /* Close button */
@@ -191,6 +223,80 @@ header h1 {
   padding: 2px 7px;
   border-radius: 4px;
   z-index: 10;
+  transition: left 0.15s, opacity 0.15s;
+}
+.tab-card:hover .index-badge,
+.tab-card.selected .index-badge {
+  left: 32px;
+}
+
+/* Selection action bar */
+.action-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  z-index: 200;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.action-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(20px);
+}
+.action-bar #selectedCount {
+  font-size: 13px;
+  color: #888;
+  white-space: nowrap;
+}
+.action-buttons {
+  display: flex;
+  gap: 8px;
+}
+.action-bar button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #252525;
+  color: #e0e0e0;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.action-bar button:hover {
+  background: #333;
+}
+#groupSelected {
+  border-color: #5b8def;
+  color: #5b8def;
+}
+#groupSelected:hover {
+  background: #5b8def;
+  color: #fff;
+}
+#discardSelected {
+  border-color: #e8a040;
+  color: #e8a040;
+}
+#discardSelected:hover {
+  background: #e8a040;
+  color: #000;
+}
+#closeSelected {
+  border-color: #e53935;
+  color: #e53935;
+}
+#closeSelected:hover {
+  background: #e53935;
+  color: #fff;
 }
 
 /* Toast */
@@ -204,7 +310,7 @@ header h1 {
   padding: 10px 20px;
   border-radius: 8px;
   font-size: 13px;
-  z-index: 200;
+  z-index: 300;
   transition: opacity 0.3s;
 }
 .toast.hidden { opacity: 0; pointer-events: none; }

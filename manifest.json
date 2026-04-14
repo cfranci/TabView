@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "TabView",
-  "version": "1.0",
-  "description": "Visual tab manager — see all tabs as previews, reorder, and close them.",
-  "permissions": ["tabs", "activeTab", "debugger"],
+  "version": "2.0",
+  "description": "Visual tab manager with RAM monitoring, multi-select, tab grouping, and window management.",
+  "permissions": ["tabs", "activeTab", "debugger", "processes", "tabGroups"],
   "action": {
     "default_title": "Open TabView"
   },

@@ -1,12 +1,17 @@
 const grid = document.getElementById("grid");
 const tabCountEl = document.getElementById("tabCount");
 const captureBtn = document.getElementById("captureAll");
+const mergeBtn = document.getElementById("mergeWindows");
 const toastEl = document.getElementById("toast");
+const actionBar = document.getElementById("actionBar");
+const selectedCountEl = document.getElementById("selectedCount");
 
 let allTabs = [];
 let managerTabId = null;
 let currentWindowId = null;
-let previews = {}; // tabId -> dataUrl
+let previews = {};
+let selectedTabs = new Set();
+let tabMemory = {};
 
 // ── Init ──
 (async () => {
@@ -14,16 +19,69 @@ let previews = {}; // tabId -> dataUrl
   managerTabId = self.id;
   currentWindowId = self.windowId;
   await loadTabs();
-  // Auto-capture on open
-  await captureAllPreviews();
+  captureAllPreviews();
+  fetchMemory();
+  setInterval(fetchMemory, 10000);
 })();
 
 // ── Load tabs ──
 async function loadTabs() {
   const tabs = await chrome.tabs.query({ currentWindow: true });
   allTabs = tabs.filter(t => t.id !== managerTabId);
-  tabCountEl.textContent = `${allTabs.length} tabs`;
+  updateTabCount();
   renderGrid();
+}
+
+function updateTabCount() {
+  const totalMem = Object.values(tabMemory).reduce((sum, m) => sum + m, 0);
+  const memStr = totalMem ? ` | ${formatMemory(totalMem)}` : "";
+  tabCountEl.textContent = `${allTabs.length} tabs${memStr}`;
+}
+
+// ── Memory ──
+async function fetchMemory() {
+  if (typeof chrome.processes === "undefined") return;
+
+  const processMap = {};
+  for (const tab of allTabs) {
+    try {
+      const pid = await chrome.processes.getProcessIdForTab(tab.id);
+      if (!processMap[pid]) processMap[pid] = [];
+      processMap[pid].push(tab.id);
+    } catch (_) {}
+  }
+
+  const pids = Object.keys(processMap).map(Number);
+  if (pids.length === 0) return;
+
+  try {
+    const info = await chrome.processes.getProcessInfo(pids, true);
+    for (const [pid, proc] of Object.entries(info)) {
+      const mem = proc.privateMemory || 0;
+      const tabs = processMap[pid] || [];
+      const perTab = tabs.length > 1 ? Math.round(mem / tabs.length) : mem;
+      for (const tabId of tabs) {
+        tabMemory[tabId] = perTab;
+      }
+    }
+  } catch (_) {}
+
+  // Update badges in-place without full re-render
+  for (const tab of allTabs) {
+    const badge = document.querySelector(`.tab-card[data-tab-id="${tab.id}"] .ram-badge`);
+    if (badge) {
+      badge.textContent = formatMemory(tabMemory[tab.id]);
+      badge.classList.toggle("ram-high", (tabMemory[tab.id] || 0) > 300 * 1024 * 1024);
+    }
+  }
+  updateTabCount();
+}
+
+function formatMemory(bytes) {
+  if (!bytes) return "";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${Math.round(mb)} MB`;
 }
 
 // ── Render ──
@@ -31,7 +89,7 @@ function renderGrid() {
   grid.innerHTML = "";
   allTabs.forEach((tab, i) => {
     const card = document.createElement("div");
-    card.className = "tab-card";
+    card.className = `tab-card${selectedTabs.has(tab.id) ? " selected" : ""}`;
     card.draggable = true;
     card.dataset.tabId = tab.id;
     card.dataset.index = i;
@@ -44,34 +102,40 @@ function renderGrid() {
            <span>Capturing...</span>
          </div>`;
 
+    const memText = formatMemory(tabMemory[tab.id]);
+    const memHigh = (tabMemory[tab.id] || 0) > 300 * 1024 * 1024;
+
     card.innerHTML = `
-      <div class="preview">${previewHtml}</div>
+      <input type="checkbox" class="tab-checkbox" ${selectedTabs.has(tab.id) ? "checked" : ""}>
       <span class="index-badge">${i + 1}</span>
       <button class="close-btn" title="Close tab">&times;</button>
+      <div class="preview">${previewHtml}</div>
       <div class="info">
         ${tab.favIconUrl ? `<img class="favicon" src="${tab.favIconUrl}" alt="">` : ""}
         <span class="title" title="${escapeHtml(tab.url || "")}">${escapeHtml(tab.title || "Untitled")}</span>
+        <span class="ram-badge${memHigh ? " ram-high" : ""}">${memText}</span>
       </div>
     `;
 
-    // Switch to tab on title click
+    card.querySelector(".tab-checkbox").addEventListener("change", (e) => {
+      e.stopPropagation();
+      toggleSelect(tab.id);
+    });
+
     card.querySelector(".title").addEventListener("click", (e) => {
       e.stopPropagation();
       chrome.tabs.update(tab.id, { active: true });
     });
 
-    // Close tab
     card.querySelector(".close-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       closeTab(tab.id, card);
     });
 
-    // Click preview to switch
     card.querySelector(".preview").addEventListener("click", () => {
       chrome.tabs.update(tab.id, { active: true });
     });
 
-    // Drag events
     card.addEventListener("dragstart", onDragStart);
     card.addEventListener("dragend", onDragEnd);
     card.addEventListener("dragover", onDragOver);
@@ -83,19 +147,135 @@ function renderGrid() {
   });
 }
 
-// ── Close tab ──
+// ── Selection ──
+function toggleSelect(tabId) {
+  if (selectedTabs.has(tabId)) {
+    selectedTabs.delete(tabId);
+  } else {
+    selectedTabs.add(tabId);
+  }
+
+  const card = document.querySelector(`.tab-card[data-tab-id="${tabId}"]`);
+  if (card) {
+    card.classList.toggle("selected", selectedTabs.has(tabId));
+    card.querySelector(".tab-checkbox").checked = selectedTabs.has(tabId);
+  }
+  updateActionBar();
+}
+
+function updateActionBar() {
+  const count = selectedTabs.size;
+  if (count === 0) {
+    actionBar.classList.add("hidden");
+  } else {
+    actionBar.classList.remove("hidden");
+    selectedCountEl.textContent = `${count} selected`;
+  }
+}
+
+// ── Group selected ──
+async function groupSelectedTabs() {
+  if (selectedTabs.size === 0) return;
+
+  const name = prompt("Group name (leave empty for none):");
+  if (name === null) return;
+
+  const tabIds = Array.from(selectedTabs);
+  try {
+    const groupId = await chrome.tabs.group({ tabIds });
+    if (name) {
+      const colors = ["blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"];
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      await chrome.tabGroups.update(groupId, { title: name, color });
+    }
+    selectedTabs.clear();
+    updateActionBar();
+    await loadTabs();
+    toast(`Grouped ${tabIds.length} tabs`);
+  } catch (e) {
+    toast("Failed to group tabs");
+  }
+}
+
+// ── Discard selected (free RAM without closing) ──
+async function discardSelectedTabs() {
+  if (selectedTabs.size === 0) return;
+
+  let discarded = 0;
+  for (const tabId of selectedTabs) {
+    try {
+      await chrome.tabs.discard(tabId);
+      discarded++;
+    } catch (_) {}
+  }
+
+  selectedTabs.clear();
+  updateActionBar();
+  await loadTabs();
+  setTimeout(fetchMemory, 1000);
+  toast(`Discarded ${discarded} tabs -- RAM freed`);
+}
+
+// ── Close selected ──
+async function closeSelectedTabs() {
+  if (selectedTabs.size === 0) return;
+
+  const count = selectedTabs.size;
+  for (const tabId of selectedTabs) {
+    try { await chrome.tabs.remove(tabId); } catch (_) {}
+    delete previews[tabId];
+    delete tabMemory[tabId];
+  }
+
+  selectedTabs.clear();
+  updateActionBar();
+  await loadTabs();
+  toast(`Closed ${count} tabs`);
+}
+
+// ── Merge all windows ──
+async function mergeAllWindows() {
+  const windows = await chrome.windows.getAll({ populate: true });
+  if (windows.length <= 1) {
+    toast("Only one window open");
+    return;
+  }
+
+  mergeBtn.disabled = true;
+  mergeBtn.textContent = "Merging...";
+
+  let moved = 0;
+  for (const win of windows) {
+    if (win.id === currentWindowId) continue;
+    for (const tab of win.tabs) {
+      try {
+        await chrome.tabs.move(tab.id, { windowId: currentWindowId, index: -1 });
+        moved++;
+      } catch (_) {}
+    }
+  }
+
+  mergeBtn.textContent = "Merge Windows";
+  mergeBtn.disabled = false;
+  await loadTabs();
+  fetchMemory();
+  toast(`Merged ${moved} tabs from ${windows.length - 1} windows`);
+}
+
+// ── Close single tab ──
 async function closeTab(tabId, card) {
   card.classList.add("closing");
+  selectedTabs.delete(tabId);
+  updateActionBar();
   await new Promise(r => setTimeout(r, 250));
-  try {
-    await chrome.tabs.remove(tabId);
-  } catch (_) {}
+  try { await chrome.tabs.remove(tabId); } catch (_) {}
   delete previews[tabId];
+  delete tabMemory[tabId];
   await loadTabs();
   toast("Tab closed");
 }
 
-// ── Capture all previews via debugger (no tab switching) ──
+// ── Capture previews ──
 async function captureAllPreviews() {
   captureBtn.disabled = true;
   captureBtn.textContent = "Capturing...";
@@ -117,16 +297,21 @@ async function captureAllPreviews() {
     renderGrid();
     toast(`Captured ${captured}/${tabIds.length} previews`);
   } else {
-    toast("Capture failed — check extension permissions");
+    toast("Capture failed");
   }
 
   captureBtn.textContent = "Refresh Previews";
   captureBtn.disabled = false;
 }
 
+// ── Button listeners ──
 captureBtn.addEventListener("click", captureAllPreviews);
+mergeBtn.addEventListener("click", mergeAllWindows);
+document.getElementById("groupSelected").addEventListener("click", groupSelectedTabs);
+document.getElementById("discardSelected").addEventListener("click", discardSelectedTabs);
+document.getElementById("closeSelected").addEventListener("click", closeSelectedTabs);
 
-// ── Drag & Drop reorder ──
+// ── Drag & Drop ──
 let dragSrcId = null;
 
 function onDragStart(e) {
@@ -165,11 +350,7 @@ async function onDrop(e) {
   const tgtIdx = allTabs.findIndex(t => t.id === parseInt(targetId));
   if (srcIdx === -1 || tgtIdx === -1) return;
 
-  // Reorder in Chrome
-  const targetTab = allTabs[tgtIdx];
-  await chrome.tabs.move(parseInt(dragSrcId), { index: targetTab.index });
-
-  // Reload to reflect new order
+  await chrome.tabs.move(parseInt(dragSrcId), { index: allTabs[tgtIdx].index });
   await loadTabs();
   toast("Tab moved");
 }
@@ -188,10 +369,13 @@ function toast(msg) {
   toast._timer = setTimeout(() => toastEl.classList.add("hidden"), 2000);
 }
 
-// Listen for tab changes to keep the grid up to date
+// ── Tab events ──
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId !== managerTabId) {
     delete previews[tabId];
+    delete tabMemory[tabId];
+    selectedTabs.delete(tabId);
+    updateActionBar();
     loadTabs();
   }
 });

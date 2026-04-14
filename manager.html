@@ -10,10 +10,19 @@
     <h1>TabView</h1>
     <div class="controls">
       <span id="tabCount"></span>
+      <button id="mergeWindows" title="Merge all windows into one">Merge Windows</button>
       <button id="captureAll" title="Capture tab previews">Capture Previews</button>
     </div>
   </header>
   <div id="grid"></div>
+  <div id="actionBar" class="action-bar hidden">
+    <span id="selectedCount">0 selected</span>
+    <div class="action-buttons">
+      <button id="groupSelected" title="Group selected tabs">Group</button>
+      <button id="discardSelected" title="Unload from memory to free RAM">Discard</button>
+      <button id="closeSelected" title="Close selected tabs">Close</button>
+    </div>
+  </div>
   <div id="toast" class="toast hidden"></div>
   <script src="manager.js"></script>
 </body>
