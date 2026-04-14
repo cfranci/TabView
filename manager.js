@@ -19,9 +19,7 @@ let tabMemory = {};
   managerTabId = self.id;
   currentWindowId = self.windowId;
   await loadTabs();
-  captureAllPreviews();
-  fetchMemory();
-  setInterval(fetchMemory, 10000);
+  await captureAllPreviews();
 })();
 
 // ── Load tabs ──
@@ -39,44 +37,6 @@ function updateTabCount() {
 }
 
 // ── Memory ──
-async function fetchMemory() {
-  if (typeof chrome.processes === "undefined") return;
-
-  const processMap = {};
-  for (const tab of allTabs) {
-    try {
-      const pid = await chrome.processes.getProcessIdForTab(tab.id);
-      if (!processMap[pid]) processMap[pid] = [];
-      processMap[pid].push(tab.id);
-    } catch (_) {}
-  }
-
-  const pids = Object.keys(processMap).map(Number);
-  if (pids.length === 0) return;
-
-  try {
-    const info = await chrome.processes.getProcessInfo(pids, true);
-    for (const [pid, proc] of Object.entries(info)) {
-      const mem = proc.privateMemory || 0;
-      const tabs = processMap[pid] || [];
-      const perTab = tabs.length > 1 ? Math.round(mem / tabs.length) : mem;
-      for (const tabId of tabs) {
-        tabMemory[tabId] = perTab;
-      }
-    }
-  } catch (_) {}
-
-  // Update badges in-place without full re-render
-  for (const tab of allTabs) {
-    const badge = document.querySelector(`.tab-card[data-tab-id="${tab.id}"] .ram-badge`);
-    if (badge) {
-      badge.textContent = formatMemory(tabMemory[tab.id]);
-      badge.classList.toggle("ram-high", (tabMemory[tab.id] || 0) > 300 * 1024 * 1024);
-    }
-  }
-  updateTabCount();
-}
-
 function formatMemory(bytes) {
   if (!bytes) return "";
   const mb = bytes / (1024 * 1024);
@@ -103,7 +63,7 @@ function renderGrid() {
          </div>`;
 
     const memText = formatMemory(tabMemory[tab.id]);
-    const memHigh = (tabMemory[tab.id] || 0) > 300 * 1024 * 1024;
+    const memHigh = (tabMemory[tab.id] || 0) > 100 * 1024 * 1024;
 
     card.innerHTML = `
       <input type="checkbox" class="tab-checkbox" ${selectedTabs.has(tab.id) ? "checked" : ""}>
@@ -212,7 +172,6 @@ async function discardSelectedTabs() {
   selectedTabs.clear();
   updateActionBar();
   await loadTabs();
-  setTimeout(fetchMemory, 1000);
   toast(`Discarded ${discarded} tabs -- RAM freed`);
 }
 
@@ -258,7 +217,6 @@ async function mergeAllWindows() {
   mergeBtn.textContent = "Merge Windows";
   mergeBtn.disabled = false;
   await loadTabs();
-  fetchMemory();
   toast(`Merged ${moved} tabs from ${windows.length - 1} windows`);
 }
 
@@ -275,7 +233,7 @@ async function closeTab(tabId, card) {
   toast("Tab closed");
 }
 
-// ── Capture previews ──
+// ── Capture previews + memory in one pass ──
 async function captureAllPreviews() {
   captureBtn.disabled = true;
   captureBtn.textContent = "Capturing...";
@@ -293,7 +251,11 @@ async function captureAllPreviews() {
         previews[tabId] = result.dataUrl;
         captured++;
       }
+      if (result.jsHeapUsed) {
+        tabMemory[tabId] = result.jsHeapUsed;
+      }
     }
+    updateTabCount();
     renderGrid();
     toast(`Captured ${captured}/${tabIds.length} previews`);
   } else {

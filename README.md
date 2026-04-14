@@ -17,7 +17,7 @@
 ## Features
 
 - **Visual tab previews** -- Captures screenshots of all tabs in the background (no disruptive tab switching)
-- **Per-tab RAM usage** -- See how much memory each tab is consuming, auto-refreshes every 10 seconds. High-memory tabs (300+ MB) are highlighted in orange.
+- **Per-tab RAM usage** -- See JS heap memory for each tab, captured alongside screenshots. High-memory tabs (100+ MB) are highlighted in orange.
 - **Multi-select** -- Checkbox on each tab card for selecting multiple tabs at once
 - **Tab grouping** -- Select tabs and group them with a name and color using Chrome's native tab groups
 - **Discard tabs** -- Unload selected tabs from memory without closing them to free RAM
@@ -61,7 +61,7 @@ Click the **TabView** icon in your toolbar. A new tab opens with a grid of all y
 - **"Refresh Previews"** -- re-captures all screenshots
 
 ### RAM monitoring
-Each tab card displays its memory usage on the right side of the info bar. Total memory across all tabs shows in the header. Tabs using more than 300 MB get an orange badge to flag them as heavy.
+Each tab card displays its JS heap usage on the right side of the info bar. Total memory across all tabs shows in the header. Tabs using more than 100 MB get an orange badge to flag them as heavy. Memory is captured during the screenshot pass -- click "Refresh Previews" to update both.
 
 ### Multi-select and bulk actions
 Check the box on the top-left of any tab card to select it. A floating action bar appears at the bottom with three options:
@@ -80,7 +80,6 @@ Click **Merge Windows** in the header to pull every tab from all other Chrome wi
 | `tabs` | Read tab titles, URLs, and favicons |
 | `activeTab` | Access the current tab |
 | `debugger` | Capture tab screenshots without switching tabs (Chrome DevTools Protocol) |
-| `processes` | Read per-tab memory/RAM usage |
 | `tabGroups` | Create and name tab groups |
 
 ## License

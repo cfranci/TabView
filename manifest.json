@@ -3,7 +3,7 @@
   "name": "TabView",
   "version": "2.0",
   "description": "Visual tab manager with RAM monitoring, multi-select, tab grouping, and window management.",
-  "permissions": ["tabs", "activeTab", "debugger", "processes", "tabGroups"],
+  "permissions": ["tabs", "activeTab", "debugger", "tabGroups"],
   "action": {
     "default_title": "Open TabView"
   },
