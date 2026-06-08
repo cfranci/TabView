@@ -8,21 +8,194 @@
 <body>
   <header>
     <h1>TabView</h1>
+    <div class="search-wrapper">
+      <div class="search-row">
+        <input type="text" id="searchInput" placeholder="Search tabs by title or URL..." autocomplete="off">
+        <button id="aiSearchToggle" class="ai-toggle" title="AI search: ask in natural language">✨ AI</button>
+      </div>
+    </div>
     <div class="controls">
       <span id="tabCount"></span>
+      <button id="aiAutoGroup" class="ai-btn" title="Use AI to auto-group all tabs by topic">✨ Auto-Group</button>
+      <button id="aiSuggestCloses" class="ai-btn" title="Use AI to suggest tabs you can close">✨ Suggest Closes</button>
+      <button id="toggleSessions" title="Saved sessions &amp; crash recovery">Sessions</button>
+      <button id="saveSession" title="Save current windows as a session">Save Session</button>
       <button id="mergeWindows" title="Merge all windows into one">Merge Windows</button>
       <button id="captureAll" title="Capture tab previews">Capture Previews</button>
+      <div class="size-controls" title="Card size">
+        <button data-size="small" class="size-btn" title="Small cards">S</button>
+        <button data-size="medium" class="size-btn" title="Medium cards">M</button>
+        <button data-size="large" class="size-btn" title="Large cards">L</button>
+      </div>
+      <button id="openSettings" class="icon-btn" title="Settings">⚙</button>
     </div>
   </header>
+
+  <!-- Settings panel -->
+  <div id="settingsPanel" class="settings-panel hidden">
+    <div class="settings-content">
+      <h3>AI Settings</h3>
+      <label for="apiKeyInput">Anthropic API Key</label>
+      <p class="settings-hint">Required for AI features. Get one at <span class="settings-link" data-url="https://console.anthropic.com/settings/keys">console.anthropic.com</span>. Stored locally only.</p>
+      <div class="settings-row">
+        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
+        <button id="saveApiKey">Save</button>
+        <button id="clearApiKey" class="settings-danger">Clear</button>
+      </div>
+      <p class="settings-status" id="apiKeyStatus"></p>
+
+      <h3 style="margin-top:24px">Preview Auto-Refresh</h3>
+      <p class="settings-hint">Re-capture previews when you return to TabView after this many minutes away:</p>
+      <div class="settings-row">
+        <input type="number" id="autoRefreshMinutes" min="0" max="60" value="5" style="max-width:80px">
+        <span style="font-size:13px;color:#888">minutes (0 to disable)</span>
+        <button id="saveAutoRefresh">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sessions panel (hidden by default) -->
+  <div id="sessionsPanel" class="sessions-panel hidden">
+    <div class="sessions-content">
+      <div class="sessions-section">
+        <h3>Saved Sessions</h3>
+        <div id="savedSessionsList" class="sessions-list">
+          <p class="sessions-empty">No saved sessions</p>
+        </div>
+      </div>
+      <div class="sessions-section">
+        <h3>Crash Recovery <span class="auto-save-hint">Auto-saved every 2 min</span></h3>
+        <div id="autoSavesList" class="sessions-list">
+          <p class="sessions-empty">No auto-saves yet</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="grid"></div>
+
   <div id="actionBar" class="action-bar hidden">
     <span id="selectedCount">0 selected</span>
     <div class="action-buttons">
       <button id="groupSelected" title="Group selected tabs">Group</button>
+      <button id="exportSelected" title="Move selected tabs into a new Chrome window">⇱ Export to Window</button>
       <button id="discardSelected" title="Unload from memory to free RAM">Discard</button>
       <button id="closeSelected" title="Close selected tabs">Close</button>
     </div>
   </div>
+
+  <!-- AI result modal -->
+  <div id="aiModal" class="ai-modal hidden">
+    <div class="ai-modal-content">
+      <div class="ai-modal-header">
+        <h2 id="aiModalTitle">AI</h2>
+        <button class="ai-modal-close" id="aiModalClose">&times;</button>
+      </div>
+      <div class="ai-modal-body" id="aiModalBody"></div>
+      <div class="ai-modal-footer" id="aiModalFooter"></div>
+    </div>
+  </div>
+
+  <!-- AI loading overlay -->
+  <div id="aiLoading" class="ai-loading hidden">
+    <div class="ai-spinner"></div>
+    <p id="aiLoadingText">Thinking...</p>
+  </div>
+
+  <!-- Hover summary tooltip -->
+  <div id="hoverTooltip" class="hover-tooltip hidden"></div>
+
+  <!-- Floating share + help buttons -->
+  <button id="shareBtn" class="floating-btn floating-btn-left" title="Share TabView with a friend (coming soon)" aria-label="Share TabView">
+    <span class="floating-icon">⤴</span>
+  </button>
+  <button id="helpBtn" class="floating-btn floating-btn-right" title="Help — features, shortcuts, tips" aria-label="Help">
+    <span class="floating-icon">?</span>
+  </button>
+
+  <!-- Help modal -->
+  <div id="helpModal" class="ai-modal hidden">
+    <div class="ai-modal-content">
+      <div class="ai-modal-header">
+        <h2>TabView — Help</h2>
+        <button class="ai-modal-close" id="helpModalClose" title="Close help">&times;</button>
+      </div>
+      <div class="ai-modal-body">
+        <h3 class="help-h3">Tab actions</h3>
+        <ul class="help-list">
+          <li><b>Click a preview or title</b> — jump to that tab</li>
+          <li><b>Click ×</b> on a card — close that tab</li>
+          <li><b>Drag a card</b> — reorder it in Chrome</li>
+          <li><b>Hover (with AI key set)</b> — see a 1-line AI summary of what the tab is about</li>
+        </ul>
+
+        <h3 class="help-h3">Selecting tabs</h3>
+        <ul class="help-list">
+          <li><b>Click the checkbox</b> on a card — select it</li>
+          <li><b>Shift+click anywhere on a card</b> — toggle selection (no need to aim at the checkbox)</li>
+          <li><b>Hold Shift</b> — all checkboxes become visible across every window</li>
+          <li><b>Window header checkbox</b> — select every tab in that window</li>
+          <li><b>Group header checkbox</b> — select every tab in that group</li>
+        </ul>
+
+        <h3 class="help-h3">When tabs are selected (bottom bar)</h3>
+        <ul class="help-list">
+          <li><b>Group</b> — create a Chrome tab group from the selection</li>
+          <li><b>Export to Window</b> — move selection into a brand-new Chrome window</li>
+          <li><b>Discard</b> — unload from RAM (tab stays, frees memory)</li>
+          <li><b>Close</b> — close every selected tab</li>
+        </ul>
+
+        <h3 class="help-h3">Window actions (each window header)</h3>
+        <ul class="help-list">
+          <li><b>+ Add Selected</b> — move currently-selected tabs into this window</li>
+          <li><b>⇆ Move Here</b> — pull every tab from another window into the TabView window</li>
+          <li><b>⊞ Group All</b> — put every tab in this window into a Chrome tab group</li>
+          <li><b>⏸ Pause All</b> — unload every tab from RAM (auto-reloads on visit)</li>
+          <li><b>× Close All</b> — close every tab in this window</li>
+          <li><b>Double-click window name</b> — rename the window</li>
+          <li><b>▼</b> — collapse / expand a window</li>
+        </ul>
+
+        <h3 class="help-h3">Group actions (each group header)</h3>
+        <ul class="help-list">
+          <li><b>Drag the colored group header</b> — reorder the whole group in the Chrome tab strip</li>
+          <li><b>⏸ Pause</b> — unload every tab in the group</li>
+          <li><b>Ungroup</b> — remove the tabs from the group (keeps them open)</li>
+          <li><b>Close Group</b> — close every tab in the group</li>
+        </ul>
+
+        <h3 class="help-h3">AI features (require an Anthropic API key in Settings)</h3>
+        <ul class="help-list">
+          <li><b>✨ Auto-Group</b> — Claude proposes 2-7 named groups based on tab topics; you review/edit before applying</li>
+          <li><b>✨ Suggest Closes</b> — Claude flags duplicate, stale, or one-off tabs with reasoning</li>
+          <li><b>✨ AI toggle on search</b> — type a natural-language query, hit Enter; top matches get a rank badge</li>
+          <li><b>Hover summaries</b> — 1-line AI summary on hover (cached per tab)</li>
+        </ul>
+
+        <h3 class="help-h3">Other controls</h3>
+        <ul class="help-list">
+          <li><b>S / M / L</b> in the top bar — change card size (saved across sessions)</li>
+          <li><b>Sessions</b> — save your current windows as a named session, restore later</li>
+          <li><b>Auto-save</b> — TabView snapshots every 2 minutes for crash recovery</li>
+          <li><b>Auto-refresh previews</b> — when you come back to TabView after N minutes away (configurable in Settings)</li>
+          <li><b>Merge Windows</b> — collapse every Chrome window into one</li>
+          <li><b>⚙ Settings</b> — set Anthropic API key and auto-refresh interval</li>
+        </ul>
+
+        <h3 class="help-h3">Keyboard shortcuts</h3>
+        <ul class="help-list">
+          <li><b>/</b> — focus the search bar</li>
+          <li><b>Esc</b> — clear search / close any open modal or panel</li>
+          <li><b>Shift</b> (hold) — reveal every checkbox, shift+click to select</li>
+        </ul>
+      </div>
+      <div class="ai-modal-footer">
+        <button id="helpModalDone" class="primary">Got it</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
   <script src="manager.js"></script>
 </body>

@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "TabView",
-  "version": "2.0",
-  "description": "Visual tab manager with RAM monitoring, multi-select, tab grouping, and window management.",
-  "permissions": ["tabs", "activeTab", "debugger", "tabGroups"],
+  "version": "3.0",
+  "description": "Visual tab manager with RAM monitoring, multi-select, tab grouping, window management, and AI-assisted organization.",
+  "permissions": ["tabs", "activeTab", "debugger", "tabGroups", "storage", "alarms"],
+  "host_permissions": ["https://api.anthropic.com/*"],
   "action": {
     "default_title": "Open TabView"
   },
