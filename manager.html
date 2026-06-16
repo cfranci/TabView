@@ -6,6 +6,12 @@
   <link rel="stylesheet" href="manager.css">
 </head>
 <body>
+  <div id="updateBanner" class="update-banner hidden">
+    <span id="updateBannerText">A new version of TabView is available.</span>
+    <button id="updateReloadBtn" title="Apply the update you just pulled">Reload now</button>
+    <a id="updateRepoLink" href="#" title="Open the repo / update instructions">How to update</a>
+    <button id="updateDismiss" class="update-dismiss" title="Dismiss">✕</button>
+  </div>
   <header>
     <h1>TabView</h1>
     <div class="search-wrapper">
@@ -21,7 +27,7 @@
       <button id="toggleSessions" title="Saved sessions &amp; crash recovery">Sessions</button>
       <button id="saveSession" title="Save current windows as a session">Save Session</button>
       <button id="mergeWindows" title="Merge all windows into one">Merge Windows</button>
-      <button id="captureAll" title="Capture tab previews">Capture Previews</button>
+      <button id="captureAll" title="Re-capture a fresh screenshot of every tab">↻ Refresh All Captures</button>
       <div class="size-controls" title="Card size">
         <button data-size="small" class="size-btn" title="Small cards">S</button>
         <button data-size="medium" class="size-btn" title="Medium cards">M</button>
@@ -35,14 +41,60 @@
   <div id="settingsPanel" class="settings-panel hidden">
     <div class="settings-content">
       <h3>AI Settings</h3>
-      <label for="apiKeyInput">Anthropic API Key</label>
-      <p class="settings-hint">Required for AI features. Get one at <span class="settings-link" data-url="https://console.anthropic.com/settings/keys">console.anthropic.com</span>. Stored locally only.</p>
+      <label for="providerSelect">Provider</label>
       <div class="settings-row">
-        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
-        <button id="saveApiKey">Save</button>
-        <button id="clearApiKey" class="settings-danger">Clear</button>
+        <select id="providerSelect">
+          <option value="anthropic">Anthropic (direct)</option>
+          <option value="openrouter">OpenRouter</option>
+        </select>
       </div>
-      <p class="settings-status" id="apiKeyStatus"></p>
+
+      <div id="anthropicSettings">
+        <label for="apiKeyInput">Anthropic API Key</label>
+        <p class="settings-hint">Required for AI features. Get one at <span class="settings-link" data-url="https://console.anthropic.com/settings/keys">console.anthropic.com</span>. Stored locally only.</p>
+        <div class="settings-row">
+          <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
+          <button id="saveApiKey">Save</button>
+          <button id="clearApiKey" class="settings-danger">Clear</button>
+        </div>
+        <p class="settings-status" id="apiKeyStatus"></p>
+      </div>
+
+      <div id="openrouterSettings" class="hidden">
+        <label for="openrouterKeyInput">OpenRouter API Key</label>
+        <p class="settings-hint">Get one at <span class="settings-link" data-url="https://openrouter.ai/keys">openrouter.ai/keys</span>. Stored locally only.</p>
+        <div class="settings-row">
+          <input type="password" id="openrouterKeyInput" placeholder="sk-or-...">
+          <button id="saveOpenrouterKey">Save</button>
+          <button id="clearOpenrouterKey" class="settings-danger">Clear</button>
+        </div>
+        <label for="openrouterModelSelect" style="margin-top:10px">Model</label>
+        <p class="settings-hint">Free models cost nothing to run; paid models bill your OpenRouter credits. <span class="settings-link" data-url="https://openrouter.ai/models">Browse all</span>.</p>
+        <div class="settings-row">
+          <select id="openrouterModelSelect" style="flex:1; min-width:0;">
+            <option value="">Click Refresh to load models…</option>
+          </select>
+          <button id="refreshModels">Refresh</button>
+        </div>
+        <p class="settings-status" id="openrouterStatus"></p>
+      </div>
+
+      <h3 style="margin-top:24px">AI Prompts</h3>
+      <p class="settings-hint">Edit the instructions the model is given for each AI feature — for example, tell Auto-group which projects and groups to sort tabs into. The required output format is appended automatically and can't be removed.</p>
+      <div class="settings-row">
+        <select id="promptSelect" style="flex:1; min-width:0;">
+          <option value="autogroup">Auto-group tabs</option>
+          <option value="suggestcloses">Suggest tabs to close</option>
+          <option value="summary">Tab summary</option>
+          <option value="search">Natural-language search</option>
+        </select>
+      </div>
+      <textarea id="promptText" rows="9" spellcheck="false" style="width:100%; margin-top:8px; box-sizing:border-box; resize:vertical; font-family:inherit; font-size:13px; line-height:1.5; padding:10px; border-radius:8px; border:1px solid #333; background:#1a1a1a; color:#e6e6e6;"></textarea>
+      <div class="settings-row" style="margin-top:8px">
+        <button id="savePrompt">Save prompt</button>
+        <button id="resetPrompt" class="settings-danger">Reset to default</button>
+      </div>
+      <p class="settings-status" id="promptStatus"></p>
 
       <h3 style="margin-top:24px">Preview Auto-Refresh</h3>
       <p class="settings-hint">Re-capture previews when you return to TabView after this many minutes away:</p>
@@ -125,7 +177,8 @@
         <ul class="help-list">
           <li><b>Click a preview or title</b> — jump to that tab</li>
           <li><b>Click ×</b> on a card — close that tab</li>
-          <li><b>Drag a card</b> — reorder it in Chrome</li>
+          <li><b>Drag a card</b> — reorder it in Chrome, or drop it into another window to move it there</li>
+          <li><b>Drop anywhere in a window</b> — dropping on a window's header or empty space (even a collapsed one) moves the tab to the end of that window</li>
           <li><b>Hover (with AI key set)</b> — see a 1-line AI summary of what the tab is about</li>
         </ul>
 
@@ -159,7 +212,9 @@
 
         <h3 class="help-h3">Group actions (each group header)</h3>
         <ul class="help-list">
-          <li><b>Drag the colored group header</b> — reorder the whole group in the Chrome tab strip</li>
+          <li><b>Drag the colored group header</b> — reorder the whole group in the Chrome tab strip, or drop it into another window to move the entire group there</li>
+          <li><b>Drag a tab onto a group</b> — drop a card onto a group (or onto any card inside it) to move that tab into the group; drag it from one group straight onto another to switch groups</li>
+          <li><b>Drag a grouped tab onto a loose card</b> — pulls it out of its group</li>
           <li><b>⏸ Pause</b> — unload every tab in the group</li>
           <li><b>Ungroup</b> — remove the tabs from the group (keeps them open)</li>
           <li><b>Close Group</b> — close every tab in the group</li>
@@ -180,6 +235,7 @@
           <li><b>Auto-save</b> — TabView snapshots every 2 minutes for crash recovery</li>
           <li><b>Auto-refresh previews</b> — when you come back to TabView after N minutes away (configurable in Settings)</li>
           <li><b>Merge Windows</b> — collapse every Chrome window into one</li>
+          <li><b>↻ Refresh All Captures</b> — re-capture a fresh screenshot of every tab on demand</li>
           <li><b>⚙ Settings</b> — set Anthropic API key and auto-refresh interval</li>
         </ul>
 

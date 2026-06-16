@@ -1,0 +1,9 @@
+# Backups / scratch
+*.bak
+
+# Compiled Swift helper (build with swipe-helper/build.sh)
+swipe-helper/TabSwipe
+swipe-helper/TabSwipe.app/
+
+# macOS
+.DS_Store

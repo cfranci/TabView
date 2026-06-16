@@ -17,6 +17,20 @@ const apiKeyInput = document.getElementById("apiKeyInput");
 const saveApiKeyBtn = document.getElementById("saveApiKey");
 const clearApiKeyBtn = document.getElementById("clearApiKey");
 const apiKeyStatus = document.getElementById("apiKeyStatus");
+const providerSelect = document.getElementById("providerSelect");
+const anthropicSettings = document.getElementById("anthropicSettings");
+const openrouterSettings = document.getElementById("openrouterSettings");
+const openrouterKeyInput = document.getElementById("openrouterKeyInput");
+const saveOpenrouterKeyBtn = document.getElementById("saveOpenrouterKey");
+const clearOpenrouterKeyBtn = document.getElementById("clearOpenrouterKey");
+const openrouterModelSelect = document.getElementById("openrouterModelSelect");
+const refreshModelsBtn = document.getElementById("refreshModels");
+const openrouterStatus = document.getElementById("openrouterStatus");
+const promptSelect = document.getElementById("promptSelect");
+const promptText = document.getElementById("promptText");
+const savePromptBtn = document.getElementById("savePrompt");
+const resetPromptBtn = document.getElementById("resetPrompt");
+const promptStatus = document.getElementById("promptStatus");
 const autoRefreshInput = document.getElementById("autoRefreshMinutes");
 const saveAutoRefreshBtn = document.getElementById("saveAutoRefresh");
 const aiAutoGroupBtn = document.getElementById("aiAutoGroup");
@@ -29,6 +43,12 @@ const aiModalClose = document.getElementById("aiModalClose");
 const aiLoading = document.getElementById("aiLoading");
 const aiLoadingText = document.getElementById("aiLoadingText");
 const hoverTooltip = document.getElementById("hoverTooltip");
+const updateBanner = document.getElementById("updateBanner");
+const updateBannerText = document.getElementById("updateBannerText");
+const updateReloadBtn = document.getElementById("updateReloadBtn");
+const updateRepoLink = document.getElementById("updateRepoLink");
+const updateDismiss = document.getElementById("updateDismiss");
+const REPO_URL = "https://github.com/cfranci/TabView";
 
 // ── State ──
 let allWindows = [];
@@ -47,8 +67,12 @@ let aiSearchResults = null; // { tabId: rank }
 let aiCloseFlags = new Set();
 let summaryCache = {}; // tabId -> string
 let summaryInflight = new Set();
-let hasApiKey = false;
+let hasApiKey = false;        // active provider is configured (gates AI features)
+let aiProvider = "anthropic";
+let hasOpenrouterKey = false;
 let autoRefreshMinutes = 5;
+let promptDefaults = {};   // key -> default guidance, fetched from background
+let promptOverrides = {};  // key -> user override (only set keys present)
 let lastFocusTimestamp = Date.now();
 
 // ── Load saved prefs ──
@@ -85,29 +109,190 @@ document.querySelectorAll(".size-btn").forEach(b => {
   await captureAllPreviews();
   checkForCrashRecovery();
   setupAutoRefresh();
+  setupUpdateBanner();
 })();
+
+// ── Update banner ──
+async function setupUpdateBanner() {
+  updateRepoLink.href = REPO_URL;
+  updateReloadBtn.addEventListener("click", () => chrome.runtime.reload());
+  updateRepoLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: REPO_URL });
+  });
+  updateDismiss.addEventListener("click", () => updateBanner.classList.add("hidden"));
+
+  // Show whatever the last background check found, then refresh in the background.
+  const cached = (await chrome.storage.local.get("tabview_update")).tabview_update;
+  if (cached?.available) showUpdateBanner(cached.version);
+  const fresh = await chrome.runtime.sendMessage({ type: "checkUpdateNow" });
+  if (fresh?.available) showUpdateBanner(fresh.version);
+  else updateBanner.classList.add("hidden");
+}
+
+function showUpdateBanner(version) {
+  const here = chrome.runtime.getManifest().version;
+  updateBannerText.textContent = `TabView v${version} is available (you have v${here}). Pull the latest, then reload.`;
+  updateBanner.classList.remove("hidden");
+}
 
 // ── Settings ──
 async function loadSettings() {
-  const data = await chrome.storage.local.get(["tabview_api_key", "tabview_autorefresh_min"]);
-  hasApiKey = !!data.tabview_api_key;
+  const data = await chrome.storage.local.get([
+    "tabview_api_key",
+    "tabview_provider",
+    "tabview_openrouter_key",
+    "tabview_openrouter_model",
+    "tabview_autorefresh_min",
+  ]);
+  let provider = data.tabview_provider;
+  if (provider !== "anthropic" && provider !== "openrouter") {
+    // Infer from whichever key exists so a saved OpenRouter key works without
+    // also flipping the provider toggle.
+    provider = (data.tabview_openrouter_key && !data.tabview_api_key) ? "openrouter" : "anthropic";
+  }
+  aiProvider = provider;
+  hasOpenrouterKey = !!data.tabview_openrouter_key;
+  const hasAnthropicKey = !!data.tabview_api_key;
+  hasApiKey = aiProvider === "openrouter" ? hasOpenrouterKey : hasAnthropicKey;
+
+  providerSelect.value = aiProvider;
+  setModelSelectValue(data.tabview_openrouter_model || "");
   if (typeof data.tabview_autorefresh_min === "number") {
     autoRefreshMinutes = data.tabview_autorefresh_min;
   }
   autoRefreshInput.value = autoRefreshMinutes;
+  updateProviderUI();
   updateApiKeyUI();
+  await loadPrompts();
+}
+
+// Show the saved model id as the selected option even before the full catalog
+// is fetched, so the current choice is never lost.
+function setModelSelectValue(modelId) {
+  if (!modelId) return;
+  const exists = [...openrouterModelSelect.options].some(o => o.value === modelId);
+  if (!exists) {
+    const opt = document.createElement("option");
+    opt.value = modelId;
+    opt.textContent = modelId + " (saved)";
+    openrouterModelSelect.insertBefore(opt, openrouterModelSelect.firstChild);
+  }
+  openrouterModelSelect.value = modelId;
+}
+
+async function refreshModels() {
+  refreshModelsBtn.disabled = true;
+  refreshModelsBtn.textContent = "…";
+  openrouterStatus.textContent = "Loading models…";
+  openrouterStatus.className = "settings-status";
+  const resp = await chrome.runtime.sendMessage({ type: "getOpenrouterModels" });
+  refreshModelsBtn.disabled = false;
+  refreshModelsBtn.textContent = "Refresh";
+  if (!resp || !resp.success) {
+    openrouterStatus.textContent = `Couldn't load models: ${resp?.error || "unknown error"}`;
+    openrouterStatus.className = "settings-status err";
+    return;
+  }
+  const data = await chrome.storage.local.get("tabview_openrouter_model");
+  const current = data.tabview_openrouter_model || "";
+
+  const free = resp.models.filter(m => m.free);
+  const paid = resp.models.filter(m => !m.free);
+  openrouterModelSelect.innerHTML = "";
+  const mkOption = (m) => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = `${m.name} — ${m.free ? "free" : "paid"}`;
+    return opt;
+  };
+  const mkGroup = (label, list) => {
+    if (!list.length) return;
+    const og = document.createElement("optgroup");
+    og.label = label;
+    list.forEach(m => og.appendChild(mkOption(m)));
+    openrouterModelSelect.appendChild(og);
+  };
+  mkGroup(`Free (${free.length})`, free);
+  mkGroup(`Paid (${paid.length})`, paid);
+
+  if (current) {
+    setModelSelectValue(current);
+    openrouterStatus.textContent = `Loaded ${resp.models.length} models (${free.length} free).`;
+    openrouterStatus.className = "settings-status ok";
+  } else {
+    // Nothing chosen yet — auto-select a reputable free model so it works
+    // out of the box. The user can change it from the dropdown.
+    const pick = free.find(m => /gpt-oss|llama|deepseek|gemini|qwen|mistral/.test(m.id)
+                                 && !/guard|safety|vision|embed/.test(m.id))
+              || free[0] || resp.models[0];
+    if (pick) {
+      setModelSelectValue(pick.id);
+      await chrome.storage.local.set({ tabview_openrouter_model: pick.id });
+      openrouterStatus.textContent = `Loaded ${resp.models.length} models. Auto-picked free: ${pick.id}`;
+      openrouterStatus.className = "settings-status ok";
+    }
+  }
+}
+
+// ── AI prompt editor ──
+const PROMPT_LABELS = {
+  autogroup: "Auto-group",
+  suggestcloses: "Suggest closes",
+  summary: "Tab summary",
+  search: "Search",
+};
+
+async function loadPrompts() {
+  promptDefaults = (await chrome.runtime.sendMessage({ type: "getPromptDefaults" })) || {};
+  const data = await chrome.storage.local.get("tabview_prompts");
+  promptOverrides = data.tabview_prompts || {};
+  renderPrompt();
+}
+
+function renderPrompt() {
+  const key = promptSelect.value;
+  const overridden = typeof promptOverrides[key] === "string" && promptOverrides[key].trim();
+  promptText.value = overridden ? promptOverrides[key] : (promptDefaults[key] || "");
+  if (overridden) {
+    promptStatus.textContent = "Custom prompt in use";
+    promptStatus.className = "settings-status ok";
+  } else {
+    promptStatus.textContent = "Using default";
+    promptStatus.className = "settings-status";
+  }
+}
+
+function updateProviderUI() {
+  anthropicSettings.classList.toggle("hidden", aiProvider !== "anthropic");
+  openrouterSettings.classList.toggle("hidden", aiProvider !== "openrouter");
 }
 
 function updateApiKeyUI() {
-  if (hasApiKey) {
+  // Anthropic section status
+  if (aiProvider === "anthropic" && hasApiKey) {
     apiKeyStatus.textContent = "✓ Key saved";
     apiKeyStatus.className = "settings-status ok";
     apiKeyInput.placeholder = "••••••••••••••• (saved)";
     apiKeyInput.value = "";
   } else {
-    apiKeyStatus.textContent = "No key set — AI features disabled";
+    apiKeyStatus.textContent = aiProvider === "anthropic"
+      ? "No key set — AI features disabled" : "";
     apiKeyStatus.className = "settings-status";
   }
+
+  // OpenRouter section status
+  if (hasOpenrouterKey) {
+    openrouterStatus.textContent = "✓ Key saved";
+    openrouterStatus.className = "settings-status ok";
+    openrouterKeyInput.placeholder = "••••••••••••••• (saved)";
+    openrouterKeyInput.value = "";
+  } else {
+    openrouterStatus.textContent = aiProvider === "openrouter"
+      ? "No key set — AI features disabled" : "";
+    openrouterStatus.className = "settings-status";
+  }
+
   aiAutoGroupBtn.disabled = !hasApiKey;
   aiSuggestClosesBtn.disabled = !hasApiKey;
   aiSearchToggle.style.opacity = hasApiKey ? "1" : "0.5";
@@ -115,6 +300,18 @@ function updateApiKeyUI() {
 
 openSettingsBtn.addEventListener("click", () => {
   settingsPanel.classList.toggle("hidden");
+});
+
+providerSelect.addEventListener("change", async () => {
+  aiProvider = providerSelect.value === "openrouter" ? "openrouter" : "anthropic";
+  await chrome.storage.local.set({ tabview_provider: aiProvider });
+  // Recompute whether the now-active provider is configured.
+  const data = await chrome.storage.local.get(["tabview_api_key", "tabview_openrouter_key"]);
+  hasApiKey = aiProvider === "openrouter" ? !!data.tabview_openrouter_key : !!data.tabview_api_key;
+  hasOpenrouterKey = !!data.tabview_openrouter_key;
+  updateProviderUI();
+  updateApiKeyUI();
+  toast(`Provider: ${aiProvider === "openrouter" ? "OpenRouter" : "Anthropic"}`);
 });
 
 saveApiKeyBtn.addEventListener("click", async () => {
@@ -130,16 +327,79 @@ saveApiKeyBtn.addEventListener("click", async () => {
     return;
   }
   await chrome.storage.local.set({ tabview_api_key: key });
-  hasApiKey = true;
+  if (aiProvider === "anthropic") hasApiKey = true;
   updateApiKeyUI();
-  toast("API key saved");
+  toast("Anthropic key saved");
 });
 
 clearApiKeyBtn.addEventListener("click", async () => {
   await chrome.storage.local.remove("tabview_api_key");
-  hasApiKey = false;
+  if (aiProvider === "anthropic") hasApiKey = false;
+  apiKeyInput.placeholder = "sk-ant-...";
   updateApiKeyUI();
-  toast("API key cleared");
+  toast("Anthropic key cleared");
+});
+
+saveOpenrouterKeyBtn.addEventListener("click", async () => {
+  const key = openrouterKeyInput.value.trim();
+  if (!key) {
+    openrouterStatus.textContent = "Enter a key first";
+    openrouterStatus.className = "settings-status err";
+    return;
+  }
+  // Saving an OpenRouter key also selects OpenRouter as the active provider, so
+  // the AI features start using it immediately.
+  await chrome.storage.local.set({ tabview_openrouter_key: key, tabview_provider: "openrouter" });
+  hasOpenrouterKey = true;
+  aiProvider = "openrouter";
+  hasApiKey = true;
+  providerSelect.value = "openrouter";
+  updateProviderUI();
+  updateApiKeyUI();
+  toast("OpenRouter key saved — provider set to OpenRouter. Click Refresh to pick a model.");
+});
+
+clearOpenrouterKeyBtn.addEventListener("click", async () => {
+  await chrome.storage.local.remove("tabview_openrouter_key");
+  hasOpenrouterKey = false;
+  if (aiProvider === "openrouter") hasApiKey = false;
+  openrouterKeyInput.placeholder = "sk-or-...";
+  updateApiKeyUI();
+  toast("OpenRouter key cleared");
+});
+
+refreshModelsBtn.addEventListener("click", refreshModels);
+
+openrouterModelSelect.addEventListener("change", async () => {
+  const model = openrouterModelSelect.value;
+  if (!model) return;
+  await chrome.storage.local.set({ tabview_openrouter_model: model });
+  toast(`Model: ${model}`);
+});
+
+promptSelect.addEventListener("change", renderPrompt);
+
+savePromptBtn.addEventListener("click", async () => {
+  const key = promptSelect.value;
+  const text = promptText.value.trim();
+  if (!text) {
+    promptStatus.textContent = "Prompt can't be empty — use Reset for the default";
+    promptStatus.className = "settings-status err";
+    return;
+  }
+  promptOverrides[key] = text;
+  await chrome.storage.local.set({ tabview_prompts: promptOverrides });
+  renderPrompt();
+  toast(`${PROMPT_LABELS[key]} prompt saved`);
+});
+
+resetPromptBtn.addEventListener("click", async () => {
+  const key = promptSelect.value;
+  if (!confirm(`Are you sure you want to reset the ${PROMPT_LABELS[key]} prompt to default?`)) return;
+  delete promptOverrides[key];
+  await chrome.storage.local.set({ tabview_prompts: promptOverrides });
+  renderPrompt();
+  toast(`${PROMPT_LABELS[key]} prompt reset to default`);
 });
 
 saveAutoRefreshBtn.addEventListener("click", async () => {
@@ -373,6 +633,11 @@ function renderAll() {
       renderWindowBody(windowGrid, visibleTabs, win.id);
       section.appendChild(windowGrid);
     }
+
+    // Drop anywhere in this window (header, empty space, collapsed strip) to move
+    // the dragged tab/group into it. Card/cluster drops stopPropagation, so this
+    // only fires for drops that didn't land on a specific card or group.
+    attachSectionDropHandlers(section, win.id);
 
     grid.appendChild(section);
   });
@@ -839,7 +1104,23 @@ async function mergeAllWindows() {
   let moved = 0;
   for (const win of allWindows) {
     if (win.id === managerWindowId) continue;
+
+    // Move whole tab groups first. Moving grouped tabs individually with
+    // chrome.tabs.move ungroups them; chrome.tabGroups.move carries the group
+    // (membership, title, color) into the target window intact.
+    const groupIds = [...new Set(
+      win.tabs.map(t => t.groupId).filter(gid => gid !== undefined && gid !== -1)
+    )];
+    for (const gid of groupIds) {
+      try {
+        await chrome.tabGroups.move(gid, { windowId: managerWindowId, index: -1 });
+        moved += win.tabs.filter(t => t.groupId === gid).length;
+      } catch (_) {}
+    }
+
+    // Then move the ungrouped tabs.
     for (const tab of win.tabs) {
+      if (tab.groupId !== undefined && tab.groupId !== -1) continue;
       try {
         await chrome.tabs.move(tab.id, { windowId: managerWindowId, index: -1 });
         moved++;
@@ -869,47 +1150,61 @@ async function captureAllPreviews(opts = {}) {
   captureBtn.disabled = true;
   captureBtn.textContent = "Capturing...";
 
-  const allTabs = allWindows.flatMap(w => w.tabs);
-  let tabIds;
-  if (opts.staleOnly) {
-    const cutoff = Date.now() - 30 * 60 * 1000;
-    tabIds = allTabs
-      .filter(t => !previews[t.id] || !previewTimestamps[t.id] || previewTimestamps[t.id] < cutoff)
-      .map(t => t.id);
-  } else {
-    tabIds = allTabs.map(t => t.id);
-  }
+  try {
+    const allTabs = allWindows.flatMap(w => w.tabs);
+    let tabIds;
+    if (opts.staleOnly) {
+      const cutoff = Date.now() - 30 * 60 * 1000;
+      tabIds = allTabs
+        .filter(t => !previews[t.id] || !previewTimestamps[t.id] || previewTimestamps[t.id] < cutoff)
+        .map(t => t.id);
+    } else {
+      tabIds = allTabs.map(t => t.id);
+    }
 
-  if (tabIds.length === 0) {
-    captureBtn.textContent = "Refresh Previews";
-    captureBtn.disabled = false;
-    return;
-  }
+    if (tabIds.length === 0) return;
 
-  const results = await chrome.runtime.sendMessage({
-    type: "captureAllTabs",
-    tabIds,
-  });
+    let results;
+    try {
+      results = await chrome.runtime.sendMessage({ type: "captureAllTabs", tabIds });
+    } catch (e) {
+      if (!opts.silent) toast("Capture failed: " + e.message);
+      return;
+    }
 
-  if (results) {
-    let captured = 0;
+    if (!results) {
+      if (!opts.silent) toast("Capture failed");
+      return;
+    }
+
+    let captured = 0, skipped = 0, failed = 0;
     for (const [tabId, result] of Object.entries(results)) {
       if (result.success) {
         previews[tabId] = result.dataUrl;
         previewTimestamps[tabId] = Date.now();
         captured++;
+      } else if (result.skipped) {
+        skipped++;
+      } else {
+        failed++;
       }
       if (result.jsHeapUsed) tabMemory[tabId] = result.jsHeapUsed;
     }
     updateTabCount();
     renderAll();
-    if (!opts.silent) toast(`Captured ${captured}/${tabIds.length} previews`);
-  } else if (!opts.silent) {
-    toast("Capture failed");
-  }
 
-  captureBtn.textContent = "Refresh Previews";
-  captureBtn.disabled = false;
+    if (!opts.silent) {
+      let msg = `Captured ${captured} preview${captured !== 1 ? "s" : ""}`;
+      const extras = [];
+      if (skipped) extras.push(`${skipped} skipped`);
+      if (failed) extras.push(`${failed} failed`);
+      if (extras.length) msg += ` (${extras.join(", ")})`;
+      toast(msg);
+    }
+  } finally {
+    captureBtn.textContent = "↻ Refresh All Captures";
+    captureBtn.disabled = false;
+  }
 }
 
 // ── Auto-refresh on focus ──
@@ -1399,13 +1694,60 @@ function onDragLeave() {
 }
 async function onDrop(e) {
   e.preventDefault();
+  e.stopPropagation(); // handled here — don't let the window section also catch it
   this.classList.remove("drag-over");
   const targetWindowId = parseInt(this.dataset.windowId);
   const targetWin = allWindows.find(w => w.id === targetWindowId);
   if (!targetWin) return;
   const targetTab = targetWin.tabs.find(t => t.id === parseInt(this.dataset.tabId));
   if (!targetTab) return;
+
+  // Group-aware tab drops: dropping a tab onto a card that lives in a group adds
+  // it to that group; dropping it onto a loose (ungrouped) card pulls it out of
+  // whatever group it was in. Same-group drops fall through to a plain reorder.
+  if (dragSrcType === "tab") {
+    const draggedId = parseInt(dragSrcId);
+    if (draggedId === targetTab.id) return;
+    const targetGroupId = (targetTab.groupId !== -1 && tabGroupInfo[targetTab.groupId]) ? targetTab.groupId : null;
+    const draggedTab = findTab(draggedId);
+    const draggedGroupId = draggedTab ? draggedTab.groupId : -1;
+    if (targetGroupId !== null && draggedGroupId !== targetGroupId) {
+      await joinGroup(draggedId, targetGroupId, targetWindowId);
+      return;
+    }
+    if (targetGroupId === null && draggedGroupId !== -1) {
+      try { await chrome.tabs.ungroup(draggedId); } catch (_) {}
+    }
+  }
+
   await moveDragged(targetWindowId, targetTab.index);
+}
+
+// Find a tab object by id across all windows (for group-membership checks)
+function findTab(tabId) {
+  for (const w of allWindows) {
+    const t = w.tabs.find(t => t.id === tabId);
+    if (t) return t;
+  }
+  return null;
+}
+
+// Add a dragged tab into an existing group, moving it across windows first if
+// needed (Chrome groups can't span windows). Joining a new group automatically
+// removes the tab from whatever group it was in before.
+async function joinGroup(tabId, groupId, targetWindowId) {
+  try {
+    const t = findTab(tabId);
+    const srcWindowId = t ? t.windowId : parseInt(dragSrcWindowId);
+    if (srcWindowId !== targetWindowId) {
+      await chrome.tabs.move(tabId, { windowId: targetWindowId, index: -1 });
+    }
+    await chrome.tabs.group({ groupId, tabIds: [tabId] });
+    await loadAllWindows();
+    toast("Tab moved into group");
+  } catch (err) {
+    toast("Couldn't add to group: " + err.message);
+  }
 }
 
 async function moveDragged(targetWindowId, targetIndex) {
@@ -1430,6 +1772,34 @@ async function moveDragged(targetWindowId, targetIndex) {
   } catch (err) {
     toast("Move failed: " + err.message);
   }
+}
+
+// Window-section drop target: dropping a tab/group anywhere in a window (that
+// isn't a specific card or cluster) appends it to the end of that window.
+function attachSectionDropHandlers(section, windowId) {
+  section.addEventListener("dragover", (e) => {
+    if (!dragSrcType) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+  section.addEventListener("dragenter", (e) => {
+    if (!dragSrcType) return;
+    // Only highlight when dragging from a different window — same-window appends
+    // are handled fine, but the highlight is most useful for cross-window moves.
+    e.preventDefault();
+    section.classList.add("drag-over");
+  });
+  section.addEventListener("dragleave", (e) => {
+    // Ignore leave events bubbling up from children
+    if (e.target === section) section.classList.remove("drag-over");
+  });
+  section.addEventListener("drop", async (e) => {
+    if (!dragSrcType) return;
+    e.preventDefault();
+    section.classList.remove("drag-over");
+    // index -1 == append to the end of the target window
+    await moveDragged(windowId, -1);
+  });
 }
 
 // Group cluster drag handlers (attached when the cluster is rendered)
@@ -1481,6 +1851,19 @@ function attachGroupDragHandlers(cluster, headerEl, groupId, gtabs, windowId) {
     e.preventDefault();
     e.stopPropagation();
     cluster.classList.remove("drag-over");
+    if (dragSrcType === "tab") {
+      const draggedId = parseInt(dragSrcId);
+      const draggedTab = findTab(draggedId);
+      if (draggedTab && draggedTab.groupId === groupId) {
+        // already in this group — reorder to the front of the group
+        const firstIndex = Math.min(...gtabs.map(t => t.index));
+        await moveDragged(windowId, firstIndex);
+      } else {
+        await joinGroup(draggedId, groupId, windowId);
+      }
+      return;
+    }
+    // a group dropped onto another group: reorder the whole group to that spot
     const firstIndex = Math.min(...gtabs.map(t => t.index));
     await moveDragged(windowId, firstIndex);
   });

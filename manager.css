@@ -180,6 +180,37 @@ mark {
   background: #141414;
 }
 .settings-panel.hidden { display: none; }
+#anthropicSettings.hidden, #openrouterSettings.hidden { display: none; }
+
+/* Update banner */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: #14223f;
+  border-bottom: 1px solid #2a3a5c;
+  color: #d7e3ff;
+  font-size: 13px;
+}
+.update-banner.hidden { display: none; }
+.update-banner button {
+  background: #3a63b8;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.update-banner button:hover { background: #4f8bff; }
+.update-banner a { color: #9bc0ff; text-decoration: underline; cursor: pointer; }
+.update-banner .update-dismiss {
+  margin-left: auto;
+  background: transparent;
+  color: #9bb3da;
+  padding: 4px 8px;
+}
+.update-banner .update-dismiss:hover { background: rgba(255,255,255,0.08); }
 .settings-content {
   padding: 20px 28px;
   max-width: 720px;
@@ -366,6 +397,11 @@ mark {
 .window-section.current-window {
   border-color: #2a3a5e;
   box-shadow: 0 0 0 1px rgba(91,141,239,0.15);
+}
+.window-section.drag-over {
+  border-color: #5b8def;
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.35);
+  background: rgba(91, 141, 239, 0.05);
 }
 
 /* Window header */
