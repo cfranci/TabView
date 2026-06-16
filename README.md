@@ -50,6 +50,24 @@ TabView isn't on the Chrome Web Store -- install it manually in about 30 seconds
    - Click the puzzle piece icon in Chrome's toolbar
    - Pin **TabView** so it's always one click away
 
+> **Tip:** clone the repo (don't download the ZIP) so you can update with one command later.
+
+## Updating
+
+Chrome doesn't auto-update extensions loaded in Developer Mode, so TabView checks GitHub itself: when a newer version is on the production branch, the toolbar icon shows an **↑** badge and a blue banner appears at the top of the TabView page.
+
+To apply an update:
+
+- **macOS:** double-click **`update.command`** in the TabView folder (pulls the latest and rebuilds the trackpad helper).
+- **Windows:** double-click **`update.bat`**.
+- **Or manually:** run `git pull` in the folder.
+
+Then click **Reload now** in TabView's banner (or hit Reload on the TabView card in `chrome://extensions`).
+
+## Trackpad swipe (macOS, optional)
+
+`swipe-helper/` adds a three-finger trackpad swipe to move between tabs. Build it with `swipe-helper/build.sh`, register the on/off bridge with `swipe-helper/install-host.sh`, then `open swipe-helper/TabSwipe.app`. Toggle it from the extension's right-click menu, and tune sensitivity with `swipe-helper/tabswipe-config.py low|medium|high`. See `swipe-helper/README.md`.
+
 ## Usage
 
 Click the **TabView** icon in your toolbar. A new tab opens with a grid of all your tabs.
@@ -81,6 +99,11 @@ Click **Merge Windows** in the header to pull every tab from all other Chrome wi
 | `activeTab` | Access the current tab |
 | `debugger` | Capture tab screenshots without switching tabs (Chrome DevTools Protocol) |
 | `tabGroups` | Create and name tab groups |
+| `storage` | Save settings, sessions, and crash-recovery snapshots locally |
+| `alarms` | Periodic auto-save and update checks |
+| `contextMenus` | Right-click toggle for the trackpad swipe helper |
+| `nativeMessaging` | Talk to the macOS trackpad swipe helper |
+| host access | `api.anthropic.com` / `openrouter.ai` for AI features, `raw.githubusercontent.com` for update checks |
 
 ## License
 
