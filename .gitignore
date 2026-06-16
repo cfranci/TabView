@@ -5,5 +5,8 @@
 swipe-helper/TabSwipe
 swipe-helper/TabSwipe.app/
 
+# Web Store packaging
+build/
+
 # macOS
 .DS_Store
