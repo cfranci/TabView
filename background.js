@@ -7,45 +7,6 @@ const AI_MODEL = "claude-haiku-4-5-20251001";
 const AI_API_URL = "https://api.anthropic.com/v1/messages";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-// ── Update checking ──
-// Chrome can't silently auto-update an unpacked extension, so instead we watch
-// the production manifest on GitHub and surface a badge + in-app banner when a
-// newer version ships. The user pulls + reloads (one click) to apply it.
-const REPO_RAW_MANIFEST = "https://raw.githubusercontent.com/cfranci/TabView/main/manifest.json";
-const REPO_URL = "https://github.com/cfranci/TabView";
-
-function cmpVersions(a, b) {
-  const pa = String(a).split(".").map(n => parseInt(n, 10) || 0);
-  const pb = String(b).split(".").map(n => parseInt(n, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d !== 0) return d > 0 ? 1 : -1;
-  }
-  return 0;
-}
-
-async function checkForUpdate() {
-  try {
-    const res = await fetch(REPO_RAW_MANIFEST, { cache: "no-store" });
-    if (!res.ok) return;
-    const remote = await res.json();
-    const local = chrome.runtime.getManifest().version;
-    const available = cmpVersions(remote.version, local) > 0;
-    await chrome.storage.local.set({
-      tabview_update: { available, version: remote.version, local, checkedAt: Date.now() },
-    });
-    if (available) {
-      chrome.action.setBadgeText({ text: "↑" });
-      chrome.action.setBadgeBackgroundColor({ color: "#4f8bff" });
-      chrome.action.setTitle({ title: `TabView — update available (v${remote.version})` });
-    } else {
-      chrome.action.setBadgeText({ text: "" });
-      chrome.action.setTitle({ title: "Open TabView" });
-    }
-  } catch (_) {}
-}
-
 chrome.action.onClicked.addListener(async (tab) => {
   const tabs = await chrome.tabs.query({ currentWindow: true });
   const existing = tabs.find(t => t.url && t.url.startsWith(chrome.runtime.getURL("manager.html")));
@@ -54,50 +15,6 @@ chrome.action.onClicked.addListener(async (tab) => {
     return;
   }
   chrome.tabs.create({ url: "manager.html" });
-});
-
-// ── Tab Swipe helper toggle (right-click the extension icon) ──
-// A checkbox item in the action context menu flips the native TabSwipe.app
-// on/off by writing a flag file through the native-messaging host.
-const NATIVE_HOST = "com.tabview.tabswipe";
-const SWIPE_MENU_ID = "tabswipe-toggle";
-
-async function getSwipeEnabled() {
-  const data = await chrome.storage.local.get("tabview_swipe_enabled");
-  return data.tabview_swipe_enabled !== false; // default on
-}
-
-function sendSwipeState(enabled) {
-  try {
-    chrome.runtime.sendNativeMessage(NATIVE_HOST, { enabled }, () => {
-      // Swallow "host not found" etc.; the menu still reflects user intent.
-      void chrome.runtime.lastError;
-    });
-  } catch (_) {}
-}
-
-async function setupSwipeMenu() {
-  const enabled = await getSwipeEnabled();
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: SWIPE_MENU_ID,
-      title: "Tab Swipe (3-finger)",
-      type: "checkbox",
-      checked: enabled,
-      contexts: ["action"],
-    });
-  });
-  sendSwipeState(enabled); // keep the native flag in sync with stored intent
-}
-
-chrome.runtime.onInstalled.addListener(setupSwipeMenu);
-chrome.runtime.onStartup.addListener(setupSwipeMenu);
-
-chrome.contextMenus.onClicked.addListener(async (info) => {
-  if (info.menuItemId !== SWIPE_MENU_ID) return;
-  const enabled = info.checked; // checkbox state after the click
-  await chrome.storage.local.set({ tabview_swipe_enabled: enabled });
-  sendSwipeState(enabled);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -165,13 +82,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     fetchOllamaModels(msg.host).then(sendResponse);
     return true;
   }
-  if (msg.type === "checkUpdateNow") {
-    checkForUpdate().then(async () => {
-      const d = await chrome.storage.local.get("tabview_update");
-      sendResponse(d.tabview_update || { available: false });
-    });
-    return true;
-  }
 });
 
 // Fetch OpenRouter's live model catalog and tag each free vs paid by pricing.
@@ -211,18 +121,14 @@ async function fetchOllamaModels(host) {
 
 // ── Auto-save (crash recovery) ──
 chrome.alarms.create("autosave", { periodInMinutes: AUTOSAVE_INTERVAL });
-chrome.alarms.create("updatecheck", { periodInMinutes: 720 }); // twice a day
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "autosave") autoSaveSnapshot();
-  if (alarm.name === "updatecheck") checkForUpdate();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   autoSaveSnapshot();
-  checkForUpdate();
 });
-chrome.runtime.onInstalled.addListener(checkForUpdate);
 
 async function autoSaveSnapshot() {
   const windows = await chrome.windows.getAll({ populate: true });

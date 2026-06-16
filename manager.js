@@ -47,12 +47,6 @@ const aiModalClose = document.getElementById("aiModalClose");
 const aiLoading = document.getElementById("aiLoading");
 const aiLoadingText = document.getElementById("aiLoadingText");
 const hoverTooltip = document.getElementById("hoverTooltip");
-const updateBanner = document.getElementById("updateBanner");
-const updateBannerText = document.getElementById("updateBannerText");
-const updateReloadBtn = document.getElementById("updateReloadBtn");
-const updateRepoLink = document.getElementById("updateRepoLink");
-const updateDismiss = document.getElementById("updateDismiss");
-const REPO_URL = "https://github.com/cfranci/TabView";
 
 // ── State ──
 let allWindows = [];
@@ -114,32 +108,7 @@ document.querySelectorAll(".size-btn").forEach(b => {
   await captureAllPreviews();
   checkForCrashRecovery();
   setupAutoRefresh();
-  setupUpdateBanner();
 })();
-
-// ── Update banner ──
-async function setupUpdateBanner() {
-  updateRepoLink.href = REPO_URL;
-  updateReloadBtn.addEventListener("click", () => chrome.runtime.reload());
-  updateRepoLink.addEventListener("click", (e) => {
-    e.preventDefault();
-    chrome.tabs.create({ url: REPO_URL });
-  });
-  updateDismiss.addEventListener("click", () => updateBanner.classList.add("hidden"));
-
-  // Show whatever the last background check found, then refresh in the background.
-  const cached = (await chrome.storage.local.get("tabview_update")).tabview_update;
-  if (cached?.available) showUpdateBanner(cached.version);
-  const fresh = await chrome.runtime.sendMessage({ type: "checkUpdateNow" });
-  if (fresh?.available) showUpdateBanner(fresh.version);
-  else updateBanner.classList.add("hidden");
-}
-
-function showUpdateBanner(version) {
-  const here = chrome.runtime.getManifest().version;
-  updateBannerText.textContent = `TabView v${version} is available (you have v${here}). Pull the latest, then reload.`;
-  updateBanner.classList.remove("hidden");
-}
 
 // ── Settings ──
 async function loadSettings() {
