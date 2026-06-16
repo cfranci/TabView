@@ -40,6 +40,10 @@ body {
   background: #5b8def !important;
   color: #fff !important;
 }
+/* Collapse to just the selected letter; reveal S/M/L on hover */
+.size-controls .size-btn { display: none; }
+.size-controls .size-btn.active { display: inline-flex; }
+.size-controls:hover .size-btn { display: inline-flex; }
 
 header {
   display: flex;
@@ -52,6 +56,7 @@ header {
   background: #0f0f0f;
   z-index: 100;
   gap: 16px;
+  flex-wrap: wrap; /* let controls drop to a second row so the gear is never cut off */
 }
 
 header h1 {
@@ -170,8 +175,9 @@ mark {
 }
 
 .icon-btn {
-  padding: 6px 10px !important;
-  font-size: 16px !important;
+  padding: 8px 13px !important;
+  font-size: 21px !important;
+  line-height: 1;
 }
 
 /* Settings panel */
@@ -180,7 +186,7 @@ mark {
   background: #141414;
 }
 .settings-panel.hidden { display: none; }
-#anthropicSettings.hidden, #openrouterSettings.hidden { display: none; }
+#anthropicSettings.hidden, #openrouterSettings.hidden, #localSettings.hidden { display: none; }
 
 /* Update banner */
 .update-banner {
@@ -692,6 +698,31 @@ body.shift-held .tab-card:hover {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+/* Capture in progress: blur the existing shots and sweep a gray wavy gradient */
+#grid.capturing .preview img {
+  filter: blur(7px) grayscale(0.35);
+  transform: scale(1.05);
+  transition: filter 0.2s;
+}
+#grid.capturing .preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    rgba(40,40,40,0.30) 25%,
+    rgba(140,140,140,0.45) 50%,
+    rgba(40,40,40,0.30) 75%
+  );
+  background-size: 220% 100%;
+  animation: captureShimmer 1.3s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes captureShimmer {
+  0%   { background-position: 130% 0; }
+  100% { background-position: -130% 0; }
 }
 .preview .placeholder {
   display: flex;

@@ -46,6 +46,7 @@
         <select id="providerSelect">
           <option value="anthropic">Anthropic (direct)</option>
           <option value="openrouter">OpenRouter</option>
+          <option value="local">Local (Ollama)</option>
         </select>
       </div>
 
@@ -77,6 +78,18 @@
           <button id="refreshModels">Refresh</button>
         </div>
         <p class="settings-status" id="openrouterStatus"></p>
+      </div>
+
+      <div id="localSettings" class="hidden">
+        <p class="settings-hint">Runs fully on your machine with <span class="settings-link" data-url="https://ollama.com">Ollama</span>. No key, no usage cost, nothing leaves your computer. Start Ollama and pull a model first (for example <code>ollama pull llama3.2</code>).</p>
+        <label for="localModelSelect" style="margin-top:6px">Model</label>
+        <div class="settings-row">
+          <select id="localModelSelect" style="flex:1; min-width:0;">
+            <option value="">Click Refresh to load installed models…</option>
+          </select>
+          <button id="refreshLocalModels">Refresh</button>
+        </div>
+        <p class="settings-status" id="localStatus"></p>
       </div>
 
       <h3 style="margin-top:24px">AI Prompts</h3>

@@ -161,6 +161,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     fetchOpenrouterModels().then(sendResponse);
     return true;
   }
+  if (msg.type === "getOllamaModels") {
+    fetchOllamaModels(msg.host).then(sendResponse);
+    return true;
+  }
   if (msg.type === "checkUpdateNow") {
     checkForUpdate().then(async () => {
       const d = await chrome.storage.local.get("tabview_update");
@@ -187,6 +191,21 @@ async function fetchOpenrouterModels() {
     return { success: true, models };
   } catch (e) {
     return { success: false, error: e.message };
+  }
+}
+
+// List models installed in the local Ollama instance (/api/tags).
+async function fetchOllamaModels(host) {
+  const base = host || "http://localhost:11434";
+  try {
+    const res = await fetch(`${base}/api/tags`);
+    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    const models = (data.models || []).map(m => ({ id: m.name, name: m.name, free: true }));
+    models.sort((a, b) => a.name.localeCompare(b.name));
+    return { success: true, models };
+  } catch (e) {
+    return { success: false, error: `Can't reach Ollama at ${base}. Is it running?` };
   }
 }
 
@@ -493,15 +512,19 @@ async function getTabsMemory(tabIds) {
 // ──────────────────────────────────────────────────────────────
 
 // Resolve the active provider and its credentials/model from storage.
+const OLLAMA_DEFAULT_HOST = "http://localhost:11434";
+
 async function getAIConfig() {
   const data = await chrome.storage.local.get([
     "tabview_provider",
     "tabview_api_key",
     "tabview_openrouter_key",
     "tabview_openrouter_model",
+    "tabview_local_model",
+    "tabview_local_host",
   ]);
   let provider = data.tabview_provider;
-  if (provider !== "anthropic" && provider !== "openrouter") {
+  if (provider !== "anthropic" && provider !== "openrouter" && provider !== "local") {
     // No explicit choice yet: infer from whichever key exists so a saved
     // OpenRouter key works without separately flipping the provider toggle.
     provider = (data.tabview_openrouter_key && !data.tabview_api_key) ? "openrouter" : "anthropic";
@@ -511,6 +534,14 @@ async function getAIConfig() {
       provider,
       key: data.tabview_openrouter_key || null,
       model: data.tabview_openrouter_model || "",
+    };
+  }
+  if (provider === "local") {
+    return {
+      provider,
+      key: "local", // sentinel: no key needed, but passes the "key set" check
+      model: data.tabview_local_model || "",
+      host: data.tabview_local_host || OLLAMA_DEFAULT_HOST,
     };
   }
   return { provider: "anthropic", key: data.tabview_api_key || null, model: AI_MODEL };
@@ -533,13 +564,29 @@ function tabBriefLine(t) {
 async function callClaude({ system, user, maxTokens = 2000 }) {
   const cfg = await getAIConfig();
   if (!cfg.key) return { success: false, error: "No API key set" };
-  if (cfg.provider === "openrouter" && !cfg.model) {
-    return { success: false, error: "No OpenRouter model selected — open Settings → AI and pick one (free or paid)." };
+  if ((cfg.provider === "openrouter" || cfg.provider === "local") && !cfg.model) {
+    const what = cfg.provider === "local" ? "a local Ollama model" : "an OpenRouter model";
+    return { success: false, error: `No model selected — open Settings → AI and pick ${what}.` };
   }
+  const openAIShaped = cfg.provider === "openrouter" || cfg.provider === "local";
 
   try {
     let res;
-    if (cfg.provider === "openrouter") {
+    if (cfg.provider === "local") {
+      // Ollama's OpenAI-compatible endpoint. Runs locally, no auth.
+      res = await fetch(`${cfg.host}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: cfg.model,
+          max_tokens: maxTokens,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+        }),
+      });
+    } else if (cfg.provider === "openrouter") {
       res = await fetch(OPENROUTER_API_URL, {
         method: "POST",
         headers: {
@@ -586,13 +633,16 @@ async function callClaude({ system, user, maxTokens = 2000 }) {
     }
 
     const data = await res.json();
-    // Anthropic: content[0].text. OpenRouter (OpenAI-shaped): choices[0].message.content.
-    const content = cfg.provider === "openrouter"
+    // Anthropic: content[0].text. OpenAI-shaped (OpenRouter/Ollama): choices[0].message.content.
+    const content = openAIShaped
       ? data.choices?.[0]?.message?.content
       : data.content?.[0]?.text;
     if (!content) return { success: false, error: "Empty response" };
     return { success: true, text: content };
   } catch (e) {
+    if (cfg.provider === "local") {
+      return { success: false, error: `Can't reach Ollama at ${cfg.host}. Is it running? (${e.message})` };
+    }
     return { success: false, error: e.message };
   }
 }

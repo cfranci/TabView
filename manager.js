@@ -26,6 +26,10 @@ const clearOpenrouterKeyBtn = document.getElementById("clearOpenrouterKey");
 const openrouterModelSelect = document.getElementById("openrouterModelSelect");
 const refreshModelsBtn = document.getElementById("refreshModels");
 const openrouterStatus = document.getElementById("openrouterStatus");
+const localSettings = document.getElementById("localSettings");
+const localModelSelect = document.getElementById("localModelSelect");
+const refreshLocalModelsBtn = document.getElementById("refreshLocalModels");
+const localStatus = document.getElementById("localStatus");
 const promptSelect = document.getElementById("promptSelect");
 const promptText = document.getElementById("promptText");
 const savePromptBtn = document.getElementById("savePrompt");
@@ -70,6 +74,7 @@ let summaryInflight = new Set();
 let hasApiKey = false;        // active provider is configured (gates AI features)
 let aiProvider = "anthropic";
 let hasOpenrouterKey = false;
+let hasLocalModel = false;
 let autoRefreshMinutes = 5;
 let promptDefaults = {};   // key -> default guidance, fetched from background
 let promptOverrides = {};  // key -> user override (only set keys present)
@@ -143,21 +148,26 @@ async function loadSettings() {
     "tabview_provider",
     "tabview_openrouter_key",
     "tabview_openrouter_model",
+    "tabview_local_model",
     "tabview_autorefresh_min",
   ]);
   let provider = data.tabview_provider;
-  if (provider !== "anthropic" && provider !== "openrouter") {
+  if (provider !== "anthropic" && provider !== "openrouter" && provider !== "local") {
     // Infer from whichever key exists so a saved OpenRouter key works without
     // also flipping the provider toggle.
     provider = (data.tabview_openrouter_key && !data.tabview_api_key) ? "openrouter" : "anthropic";
   }
   aiProvider = provider;
   hasOpenrouterKey = !!data.tabview_openrouter_key;
+  hasLocalModel = !!data.tabview_local_model;
   const hasAnthropicKey = !!data.tabview_api_key;
-  hasApiKey = aiProvider === "openrouter" ? hasOpenrouterKey : hasAnthropicKey;
+  hasApiKey = aiProvider === "openrouter" ? hasOpenrouterKey
+            : aiProvider === "local" ? hasLocalModel
+            : hasAnthropicKey;
 
   providerSelect.value = aiProvider;
   setModelSelectValue(data.tabview_openrouter_model || "");
+  setLocalModelValue(data.tabview_local_model || "");
   if (typeof data.tabview_autorefresh_min === "number") {
     autoRefreshMinutes = data.tabview_autorefresh_min;
   }
@@ -179,6 +189,55 @@ function setModelSelectValue(modelId) {
     openrouterModelSelect.insertBefore(opt, openrouterModelSelect.firstChild);
   }
   openrouterModelSelect.value = modelId;
+}
+
+function setLocalModelValue(modelId) {
+  if (!modelId) return;
+  const exists = [...localModelSelect.options].some(o => o.value === modelId);
+  if (!exists) {
+    const opt = document.createElement("option");
+    opt.value = modelId;
+    opt.textContent = modelId + " (saved)";
+    localModelSelect.insertBefore(opt, localModelSelect.firstChild);
+  }
+  localModelSelect.value = modelId;
+}
+
+async function refreshLocalModels() {
+  refreshLocalModelsBtn.disabled = true;
+  refreshLocalModelsBtn.textContent = "…";
+  localStatus.textContent = "Looking for Ollama…";
+  localStatus.className = "settings-status";
+  const resp = await chrome.runtime.sendMessage({ type: "getOllamaModels" });
+  refreshLocalModelsBtn.disabled = false;
+  refreshLocalModelsBtn.textContent = "Refresh";
+  if (!resp || !resp.success) {
+    localStatus.textContent = resp?.error || "Couldn't reach Ollama. Is it running?";
+    localStatus.className = "settings-status err";
+    return;
+  }
+  if (!resp.models.length) {
+    localStatus.textContent = "Ollama is running but has no models. Run: ollama pull llama3.2";
+    localStatus.className = "settings-status err";
+    return;
+  }
+  const current = (await chrome.storage.local.get("tabview_local_model")).tabview_local_model || "";
+  localModelSelect.innerHTML = "";
+  resp.models.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.name;
+    localModelSelect.appendChild(opt);
+  });
+  const pick = current || resp.models[0].id;
+  setLocalModelValue(pick);
+  if (!current) {
+    await chrome.storage.local.set({ tabview_local_model: pick });
+    hasLocalModel = true;
+    if (aiProvider === "local") { hasApiKey = true; updateApiKeyUI(); }
+  }
+  localStatus.textContent = `Found ${resp.models.length} local model${resp.models.length !== 1 ? "s" : ""}. Using ${pick}.`;
+  localStatus.className = "settings-status ok";
 }
 
 async function refreshModels() {
@@ -266,6 +325,7 @@ function renderPrompt() {
 function updateProviderUI() {
   anthropicSettings.classList.toggle("hidden", aiProvider !== "anthropic");
   openrouterSettings.classList.toggle("hidden", aiProvider !== "openrouter");
+  localSettings.classList.toggle("hidden", aiProvider !== "local");
 }
 
 function updateApiKeyUI() {
@@ -293,6 +353,17 @@ function updateApiKeyUI() {
     openrouterStatus.className = "settings-status";
   }
 
+  // Local (Ollama) section status
+  if (aiProvider === "local") {
+    if (hasLocalModel && localModelSelect.value) {
+      localStatus.textContent = `✓ Using ${localModelSelect.value}`;
+      localStatus.className = "settings-status ok";
+    } else if (!localStatus.textContent) {
+      localStatus.textContent = "Pick a local model (click Refresh)";
+      localStatus.className = "settings-status";
+    }
+  }
+
   aiAutoGroupBtn.disabled = !hasApiKey;
   aiSuggestClosesBtn.disabled = !hasApiKey;
   aiSearchToggle.style.opacity = hasApiKey ? "1" : "0.5";
@@ -303,15 +374,20 @@ openSettingsBtn.addEventListener("click", () => {
 });
 
 providerSelect.addEventListener("change", async () => {
-  aiProvider = providerSelect.value === "openrouter" ? "openrouter" : "anthropic";
+  const v = providerSelect.value;
+  aiProvider = (v === "openrouter" || v === "local") ? v : "anthropic";
   await chrome.storage.local.set({ tabview_provider: aiProvider });
   // Recompute whether the now-active provider is configured.
-  const data = await chrome.storage.local.get(["tabview_api_key", "tabview_openrouter_key"]);
-  hasApiKey = aiProvider === "openrouter" ? !!data.tabview_openrouter_key : !!data.tabview_api_key;
+  const data = await chrome.storage.local.get(["tabview_api_key", "tabview_openrouter_key", "tabview_local_model"]);
   hasOpenrouterKey = !!data.tabview_openrouter_key;
+  hasLocalModel = !!data.tabview_local_model;
+  hasApiKey = aiProvider === "openrouter" ? hasOpenrouterKey
+            : aiProvider === "local" ? hasLocalModel
+            : !!data.tabview_api_key;
   updateProviderUI();
   updateApiKeyUI();
-  toast(`Provider: ${aiProvider === "openrouter" ? "OpenRouter" : "Anthropic"}`);
+  const label = aiProvider === "openrouter" ? "OpenRouter" : aiProvider === "local" ? "Local (Ollama)" : "Anthropic";
+  toast(`Provider: ${label}`);
 });
 
 saveApiKeyBtn.addEventListener("click", async () => {
@@ -375,6 +451,17 @@ openrouterModelSelect.addEventListener("change", async () => {
   if (!model) return;
   await chrome.storage.local.set({ tabview_openrouter_model: model });
   toast(`Model: ${model}`);
+});
+
+refreshLocalModelsBtn.addEventListener("click", refreshLocalModels);
+
+localModelSelect.addEventListener("change", async () => {
+  const model = localModelSelect.value;
+  if (!model) return;
+  await chrome.storage.local.set({ tabview_local_model: model });
+  hasLocalModel = true;
+  if (aiProvider === "local") { hasApiKey = true; updateApiKeyUI(); }
+  toast(`Local model: ${model}`);
 });
 
 promptSelect.addEventListener("change", renderPrompt);
@@ -507,6 +594,20 @@ document.addEventListener("keyup", (e) => {
   if (e.key === "Shift") document.body.classList.remove("shift-held");
 });
 window.addEventListener("blur", () => document.body.classList.remove("shift-held"));
+
+// OS detection so shortcut hints show the right modifier (Chrome exposes this).
+const IS_MAC = (navigator.userAgentData?.platform || navigator.platform || "").toLowerCase().includes("mac");
+const MOD_LABEL = IS_MAC ? "⌘" : "Ctrl+";
+captureBtn.title = `Re-capture a fresh screenshot of every tab (${MOD_LABEL}R)`;
+
+// Cmd+R (mac) / Ctrl+R (Windows) refreshes captures instead of reloading the page.
+document.addEventListener("keydown", (e) => {
+  const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+  if (mod && !e.shiftKey && (e.key === "r" || e.key === "R")) {
+    e.preventDefault();
+    if (!captureBtn.disabled) captureAllPreviews();
+  }
+});
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "/" && document.activeElement !== searchInput) {
@@ -1032,17 +1133,28 @@ async function groupSelectedTabs() {
   if (selectedTabs.size === 0) return;
   const name = prompt("Group name (leave empty for none):");
   if (name === null) return;
-  const tabIds = Array.from(selectedTabs);
+  const ids = Array.from(selectedTabs);
   try {
-    const groupId = await chrome.tabs.group({ tabIds });
-    if (name) {
-      const color = groupColorList[Math.floor(Math.random() * groupColorList.length)];
-      await chrome.tabGroups.update(groupId, { title: name, color });
+    // chrome.tabs.group can't span windows, so bucket the selection by window
+    // and make one group per window (same name + color for consistency).
+    const byWindow = {};
+    const tabObjs = await Promise.all(ids.map(id => chrome.tabs.get(id).catch(() => null)));
+    for (const t of tabObjs) {
+      if (!t) continue;
+      (byWindow[t.windowId] ||= []).push(t.id);
+    }
+    const color = groupColorList[Math.floor(Math.random() * groupColorList.length)];
+    let grouped = 0;
+    for (const [winId, winTabIds] of Object.entries(byWindow)) {
+      const groupId = await chrome.tabs.group({ tabIds: winTabIds, createProperties: { windowId: Number(winId) } });
+      if (name) await chrome.tabGroups.update(groupId, { title: name, color });
+      grouped += winTabIds.length;
     }
     selectedTabs.clear();
     updateActionBar();
     await loadAllWindows();
-    toast(`Grouped ${tabIds.length} tabs`);
+    const winCount = Object.keys(byWindow).length;
+    toast(`Grouped ${grouped} tabs${winCount > 1 ? ` across ${winCount} windows` : ""}`);
   } catch (e) {
     toast("Failed to group tabs");
   }
@@ -1149,6 +1261,7 @@ async function closeTab(tabId, card) {
 async function captureAllPreviews(opts = {}) {
   captureBtn.disabled = true;
   captureBtn.textContent = "Capturing...";
+  if (!opts.silent) grid.classList.add("capturing"); // blur + shimmer while loading
 
   try {
     const allTabs = allWindows.flatMap(w => w.tabs);
@@ -1204,6 +1317,7 @@ async function captureAllPreviews(opts = {}) {
   } finally {
     captureBtn.textContent = "↻ Refresh All Captures";
     captureBtn.disabled = false;
+    grid.classList.remove("capturing");
   }
 }
 

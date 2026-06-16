@@ -4,7 +4,7 @@
   "version": "3.1",
   "description": "Visual tab manager with RAM monitoring, multi-select, tab grouping, window management, and AI-assisted organization.",
   "permissions": ["tabs", "activeTab", "debugger", "tabGroups", "storage", "alarms", "contextMenus", "nativeMessaging"],
-  "host_permissions": ["https://api.anthropic.com/*", "https://openrouter.ai/*", "https://raw.githubusercontent.com/*"],
+  "host_permissions": ["https://api.anthropic.com/*", "https://openrouter.ai/*", "https://raw.githubusercontent.com/*", "http://localhost/*", "http://127.0.0.1/*"],
   "action": {
     "default_title": "Open TabView"
   },
