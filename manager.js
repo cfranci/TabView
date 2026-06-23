@@ -843,6 +843,10 @@ function createTabCard(tab, index, windowId) {
   card.dataset.tabId = tab.id;
   card.dataset.index = index;
   card.dataset.windowId = windowId;
+  // Embed the full title and URL invisibly on the card (not just the visible/
+  // truncated title). Present in the DOM for search, copy, and recovery; never shown.
+  card.dataset.url = tab.url || "";
+  card.dataset.title = tab.title || "";
 
   const preview = previews[tab.id];
   const previewAge = previewTimestamps[tab.id] ? (Date.now() - previewTimestamps[tab.id]) : null;
