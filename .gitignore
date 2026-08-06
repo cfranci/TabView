@@ -10,3 +10,11 @@ build/
 
 # macOS
 .DS_Store
+node_modules/
+.next/
+.open-next/
+dist/
+.venv/
+__pycache__/
+*.tsbuildinfo
+*.log

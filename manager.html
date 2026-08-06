@@ -22,6 +22,12 @@
     </div>
     <div class="controls">
       <span id="tabCount"></span>
+      <select id="sortSelect" class="sort-select" title="Sort tabs and windows — by RAM or by when you last used them">
+        <option value="default">↕ Window order</option>
+        <option value="ram">↕ RAM: high → low</option>
+        <option value="lastused">↕ Last used: oldest first</option>
+        <option value="lastused-new">↕ Last used: newest first</option>
+      </select>
       <button id="aiAutoGroup" class="ai-btn" title="Use AI to auto-group all tabs by topic">✨ Auto-Group</button>
       <button id="aiSuggestCloses" class="ai-btn" title="Use AI to suggest tabs you can close">✨ Suggest Closes</button>
       <button id="toggleSessions" title="Saved sessions &amp; crash recovery">Sessions</button>
@@ -243,6 +249,7 @@
 
         <h3 class="help-h3">Other controls</h3>
         <ul class="help-list">
+          <li><b>↕ Sort</b> — order tabs and windows by RAM (high → low) or by when you last used them; each card shows an idle badge (like <b>3d</b> or <b>2w</b>) that turns red once a tab has sat unused for 3+ days, so stale tabs are easy to spot and close</li>
           <li><b>S / M / L</b> in the top bar — change card size (saved across sessions)</li>
           <li><b>Sessions</b> — save your current windows as a named session, restore later</li>
           <li><b>Auto-save</b> — TabView snapshots every 2 minutes for crash recovery</li>

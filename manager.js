@@ -103,6 +103,21 @@ document.querySelectorAll(".size-btn").forEach(b => {
   b.addEventListener("click", () => applyCardSize(b.dataset.size));
 });
 
+// Sort preference: "default" (Chrome order, groups kept) | "ram" | "lastused" | "lastused-new"
+const sortSelect = document.getElementById("sortSelect");
+let sortMode = localStorage.getItem("tabview_sortMode") || "default";
+if (sortSelect) {
+  if (!["default", "ram", "lastused", "lastused-new"].includes(sortMode)) sortMode = "default";
+  sortSelect.value = sortMode;
+  sortSelect.classList.toggle("active", sortMode !== "default");
+  sortSelect.addEventListener("change", () => {
+    sortMode = sortSelect.value;
+    localStorage.setItem("tabview_sortMode", sortMode);
+    sortSelect.classList.toggle("active", sortMode !== "default");
+    renderAll();
+  });
+}
+
 // ── Init ──
 (async () => {
   const self = await chrome.tabs.getCurrent();
@@ -544,6 +559,59 @@ function formatMemory(bytes) {
   return `${Math.round(mb)} MB`;
 }
 
+// ── Sort / staleness helpers ──
+const IDLE_OLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days = "stale"
+
+// Compact idle string from a lastAccessed timestamp: "now", "5m", "3h", "2d", "3w", "2mo"
+function formatIdle(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 90) return "now";
+  const m = s / 60;
+  if (m < 60) return `${Math.round(m)}m`;
+  const h = m / 60;
+  if (h < 24) return `${Math.round(h)}h`;
+  const d = h / 24;
+  if (d < 7) return `${Math.round(d)}d`;
+  const w = d / 7;
+  if (w < 5) return `${Math.round(w)}w`;
+  return `${Math.round(d / 30)}mo`;
+}
+
+function windowTotalMem(win) {
+  return win.tabs.reduce((sum, t) => sum + (tabMemory[t.id] || 0), 0);
+}
+// Most recent activity in a window (max lastAccessed) — used to rank windows by staleness
+function windowMostRecent(win) {
+  return win.tabs.reduce((max, t) => Math.max(max, t.lastAccessed || 0), 0);
+}
+
+// Windows in display order for the current sort mode (does not mutate allWindows)
+function getSortedWindows() {
+  const wins = allWindows.slice();
+  if (sortMode === "ram") {
+    wins.sort((a, b) => windowTotalMem(b) - windowTotalMem(a));
+  } else if (sortMode === "lastused") {
+    wins.sort((a, b) => windowMostRecent(a) - windowMostRecent(b)); // stalest window first
+  } else if (sortMode === "lastused-new") {
+    wins.sort((a, b) => windowMostRecent(b) - windowMostRecent(a));
+  }
+  return wins;
+}
+
+// Tabs sorted for a flat (non-default) sort mode
+function sortTabsForMode(tabs) {
+  const t = tabs.slice();
+  if (sortMode === "ram") {
+    t.sort((a, b) => (tabMemory[b.id] || 0) - (tabMemory[a.id] || 0));
+  } else if (sortMode === "lastused") {
+    t.sort((a, b) => (a.lastAccessed || 0) - (b.lastAccessed || 0)); // oldest first
+  } else if (sortMode === "lastused-new") {
+    t.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+  }
+  return t;
+}
+
 // ── Group color map ──
 const groupColorMap = {
   grey: "#5f6368",
@@ -642,7 +710,7 @@ function tabMatchesSearch(tab) {
 // ── Render ──
 function renderAll() {
   grid.innerHTML = "";
-  allWindows.forEach(win => {
+  getSortedWindows().forEach(win => {
     const filteredTabs = win.tabs.filter(tabMatchesSearch);
     if (filteredTabs.length === 0 && searchQuery && !aiSearchMode) return;
 
@@ -655,6 +723,19 @@ function renderAll() {
     const isCurrent = win.id === managerWindowId;
     const name = windowNames[win.id] || (isCurrent ? "Current Window" : "Window");
     const displayCount = searchQuery && !aiSearchMode ? filteredTabs.length : win.tabs.length;
+
+    // Per-window RAM total + staleness (how long since any tab here was touched)
+    const winMem = windowTotalMem(win);
+    const winMemStr = formatMemory(winMem);
+    const winMemBadge = winMemStr
+      ? `<span class="window-mem${winMem > 500 * 1024 * 1024 ? " mem-high" : ""}" title="Total measured RAM (JS heap) for this window">${winMemStr}</span>`
+      : "";
+    const winRecent = windowMostRecent(win);
+    const winIdle = formatIdle(winRecent);
+    const winIdleOld = winRecent && (Date.now() - winRecent) > IDLE_OLD_MS;
+    const winIdleBadge = winIdle
+      ? `<span class="window-idle${winIdleOld ? " idle-old" : ""}" title="Longest since any tab in this window was active">idle ${winIdle}</span>`
+      : "";
 
     // Header
     const header = document.createElement("div");
@@ -672,6 +753,8 @@ function renderAll() {
       <span class="window-name">${escapeHtml(name)}</span>
       ${isCurrent ? `<span class="window-current-badge">This Window</span>` : ""}
       <span class="window-tab-count">(${displayCount})</span>
+      ${winMemBadge}
+      ${winIdleBadge}
       <span class="window-spacer"></span>
       <div class="window-actions">
         <button class="window-action-btn primary" data-action="add-selected" title="Move currently selected tabs into this window">+ Add Selected</button>
@@ -755,6 +838,13 @@ function renderWindowBody(container, tabs, windowId) {
       return ra - rb;
     });
     ranked.forEach(tab => container.appendChild(createTabCard(tab, tab.index, windowId)));
+    return;
+  }
+
+  // Sort modes (RAM / last-used): render a flat ranked list, ignoring group
+  // clustering so the ordering is unambiguous top-to-bottom for closing stale tabs.
+  if (sortMode !== "default") {
+    sortTabsForMode(tabs).forEach(tab => container.appendChild(createTabCard(tab, tab.index, windowId)));
     return;
   }
 
@@ -873,6 +963,13 @@ function createTabCard(tab, index, windowId) {
 
   const pausedBadge = tab.discarded ? `<span class="paused-badge" title="Paused — unloaded from RAM. Click to reload.">⏸ Paused</span>` : "";
 
+  // Idle badge: how long since this tab was last active (turns red once stale)
+  const idleText = formatIdle(tab.lastAccessed);
+  const idleOld = tab.lastAccessed && (Date.now() - tab.lastAccessed) > IDLE_OLD_MS;
+  const idleBadge = idleText
+    ? `<span class="idle-badge${idleOld ? " idle-old" : ""}" title="Last active ${idleText} ago">${idleText}</span>`
+    : "";
+
   card.innerHTML = `
     <input type="checkbox" class="tab-checkbox" title="Select this tab (Shift+click anywhere on the card also works)" ${selectedTabs.has(tab.id) ? "checked" : ""}>
     <span class="index-badge" title="Tab position in the window">${index + 1}</span>
@@ -880,6 +977,7 @@ function createTabCard(tab, index, windowId) {
     <div class="preview" title="Click to switch to this tab">${previewHtml}</div>
     ${rankBadge}
     ${pausedBadge}
+    ${idleBadge}
     <div class="info">
       ${tab.favIconUrl ? `<img class="favicon" src="${tab.favIconUrl}" alt="">` : ""}
       <span class="title" title="${escapeHtml(tab.url || "")}">${displayTitle}</span>

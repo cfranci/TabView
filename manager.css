@@ -159,6 +159,21 @@ mark {
 .controls button:hover { background: #2a2a2a; }
 .controls button:disabled { opacity: 0.4; cursor: default; }
 
+.controls .sort-select {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #1a1a1a;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.controls .sort-select:hover { background: #2a2a2a; }
+.controls .sort-select.active { border-color: #5b8def; color: #fff; }
+
 .controls .ai-btn {
   border-color: #4a3865;
   color: #c39df0;
@@ -482,6 +497,26 @@ mark {
   font-weight: 400;
 }
 
+.window-mem {
+  font-size: 12px;
+  color: #888;
+  background: #222;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.window-mem.mem-high {
+  color: #e8a040;
+  background: rgba(232, 160, 64, 0.12);
+}
+.window-idle {
+  font-size: 11px;
+  color: #6a6a6a;
+  font-variant-numeric: tabular-nums;
+}
+.window-idle.idle-old { color: #d98b8b; }
+
 .window-spacer { flex: 1; }
 
 .window-actions {
@@ -791,6 +826,27 @@ body.shift-held .tab-card:hover {
 .ram-badge.ram-high {
   color: #e8a040;
   background: rgba(232, 160, 64, 0.12);
+}
+
+/* Idle-time badge (bottom-right of preview) — how long since the tab was active */
+.idle-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #9a9a9a;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  z-index: 10;
+  letter-spacing: 0.3px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.idle-badge.idle-old {
+  background: rgba(217, 76, 76, 0.82);
+  color: #fff;
 }
 
 /* Group badge (small chip on card — kept for ungrouped fallback) */
