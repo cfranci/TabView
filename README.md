@@ -27,6 +27,8 @@
 - **Click to switch** -- Click any preview or title to jump straight to that tab
 - **Live updates** -- Grid stays in sync as you open, close, or move tabs
 - **Auto-capture** -- Previews start capturing automatically when you open TabView
+- **Organize without AI** -- Reorder tabs so related ones sit together (by type, logged-in account, or project), with order rules for tabs you always want first, plus rule-based close suggestions and a sidebar of every open URL
+- **AI with your own model** -- Auto-group, close suggestions, search, and summaries run on Anthropic, OpenRouter, or a local model. In Settings choose Local model, enter the server address (Ollama, LM Studio, llama.cpp, Jan, or any OpenAI-compatible server, on this machine or another), press Connect, and pick a model
 
 ## Install (Developer Mode)
 
@@ -91,6 +93,18 @@ Check the box on the top-left of any tab card to select it. A floating action ba
 ### Merge windows
 Click **Merge Windows** in the header to pull every tab from all other Chrome windows into the current window.
 
+## Tests
+
+```bash
+cd tests
+npm install        # once; installs Playwright
+npm test           # unit tests, then browser tests
+```
+
+- `tests/unit` covers the organizer logic in `organize.js` (ordering, account and project detection, close suggestions).
+- `tests/e2e` loads the unpacked extension in headless Chromium and drives the real manager page against local fixture pages: rendering, captures, search, sorting, selection, grouping, windows, drag and drop, sessions, settings, the organizer, Cleanup, the sidebar, and the AI features (answered by a fake local model server, so no key is needed).
+- Tab discarding is stubbed in the browser tests: really discarding a tab crashes Chromium while a test driver is attached to it.
+
 ## Permissions
 
 | Permission | Purpose |
@@ -103,7 +117,9 @@ Click **Merge Windows** in the header to pull every tab from all other Chrome wi
 | `alarms` | Periodic auto-save and update checks |
 | `contextMenus` | Right-click toggle for the trackpad swipe helper |
 | `nativeMessaging` | Talk to the macOS trackpad swipe helper |
-| host access | `api.anthropic.com` / `openrouter.ai` for AI features, `raw.githubusercontent.com` for update checks |
+| `declarativeNetRequestWithHostAccess` | Send requests to your local model server with the server's own origin; Ollama rejects requests from extension origins otherwise. Only applies to TabView's own requests to that server |
+| host access | `api.anthropic.com` / `openrouter.ai` for AI features, `raw.githubusercontent.com` for update checks, `localhost` / `127.0.0.1` for local models |
+| optional host access | Asked for only when you connect a model server on another machine, and only for that host |
 
 ## License
 

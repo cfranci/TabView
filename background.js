@@ -194,19 +194,78 @@ async function fetchOpenrouterModels() {
   }
 }
 
-// List models installed in the local Ollama instance (/api/tags).
-async function fetchOllamaModels(host) {
-  const base = host || "http://localhost:11434";
+// ── Local model servers ──
+// Works with Ollama and with anything that speaks the OpenAI API: LM Studio,
+// llama.cpp server, Jan, vLLM, LiteLLM, a model on another machine.
+
+// "localhost:1234/v1/" -> "http://localhost:1234"
+function normalizeLocalHost(host) {
+  let h = String(host || "").trim();
+  if (!h) return OLLAMA_DEFAULT_HOST;
+  if (!/^https?:\/\//i.test(h)) h = "http://" + h;
+  return h.replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+
+async function getLocalServer(hostOverride) {
+  const data = await chrome.storage.local.get(["tabview_local_host", "tabview_local_key"]);
+  return {
+    host: normalizeLocalHost(hostOverride || data.tabview_local_host),
+    key: data.tabview_local_key || "",
+  };
+}
+
+// Local servers (Ollama especially) reject requests whose Origin is a
+// chrome-extension:// URL with a 403. Present the server's own origin instead,
+// so it works without the user reconfiguring the server.
+const LOCAL_ORIGIN_RULE_ID = 1;
+async function allowLocalOrigin(host) {
   try {
-    const res = await fetch(`${base}/api/tags`);
-    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
-    const data = await res.json();
-    const models = (data.models || []).map(m => ({ id: m.name, name: m.name, free: true }));
-    models.sort((a, b) => a.name.localeCompare(b.name));
-    return { success: true, models };
-  } catch (e) {
-    return { success: false, error: `Can't reach Ollama at ${base}. Is it running?` };
+    const origin = new URL(host).origin;
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [LOCAL_ORIGIN_RULE_ID],
+      addRules: [{
+        id: LOCAL_ORIGIN_RULE_ID,
+        priority: 1,
+        action: { type: "modifyHeaders", requestHeaders: [{ header: "origin", operation: "set", value: origin }] },
+        condition: { urlFilter: `|${origin}/`, initiatorDomains: [chrome.runtime.id], resourceTypes: ["xmlhttprequest"] },
+      }],
+    });
+  } catch (_) {} // the request still goes out; the server may or may not accept it
+}
+
+function localAuthHeaders(key) {
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+function localHttpError(status, host) {
+  if (status === 401) return `The server at ${host} wants an API key. Add one under Settings.`;
+  if (status === 403) return `The server at ${host} refused the request (403). If it is Ollama, set OLLAMA_ORIGINS to chrome-extension://* and restart it.`;
+  return `The server at ${host} answered HTTP ${status}.`;
+}
+
+// List the models a local server offers. Tries Ollama's own listing first,
+// then the OpenAI-style one every other local server uses.
+async function fetchOllamaModels(hostOverride) {
+  const { host, key } = await getLocalServer(hostOverride);
+  await allowLocalOrigin(host);
+  const headers = localAuthHeaders(key);
+  let lastStatus = null;
+  let reached = false;
+  for (const [path, pick] of [
+    ["/api/tags", d => (d.models || []).map(m => m.name)],
+    ["/v1/models", d => (d.data || []).map(m => m.id)],
+  ]) {
+    try {
+      const res = await fetch(host + path, { headers });
+      reached = true;
+      if (!res.ok) { lastStatus = res.status; continue; }
+      const names = pick(await res.json()).filter(Boolean);
+      const models = names.map(n => ({ id: n, name: n, free: true })).sort((a, b) => a.name.localeCompare(b.name));
+      return { success: true, models, host, kind: path === "/api/tags" ? "ollama" : "openai" };
+    } catch (_) {}
   }
+  if (!reached) return { success: false, error: `Can't reach a model server at ${host}. Is it running?` };
+  return { success: false, error: localHttpError(lastStatus, host) };
 }
 
 // ── Auto-save (crash recovery) ──
@@ -522,6 +581,7 @@ async function getAIConfig() {
     "tabview_openrouter_model",
     "tabview_local_model",
     "tabview_local_host",
+    "tabview_local_key",
   ]);
   let provider = data.tabview_provider;
   if (provider !== "anthropic" && provider !== "openrouter" && provider !== "local") {
@@ -541,7 +601,8 @@ async function getAIConfig() {
       provider,
       key: "local", // sentinel: no key needed, but passes the "key set" check
       model: data.tabview_local_model || "",
-      host: data.tabview_local_host || OLLAMA_DEFAULT_HOST,
+      host: normalizeLocalHost(data.tabview_local_host),
+      localKey: data.tabview_local_key || "",
     };
   }
   return { provider: "anthropic", key: data.tabview_api_key || null, model: AI_MODEL };
@@ -565,7 +626,7 @@ async function callClaude({ system, user, maxTokens = 2000 }) {
   const cfg = await getAIConfig();
   if (!cfg.key) return { success: false, error: "No API key set" };
   if ((cfg.provider === "openrouter" || cfg.provider === "local") && !cfg.model) {
-    const what = cfg.provider === "local" ? "a local Ollama model" : "an OpenRouter model";
+    const what = cfg.provider === "local" ? "a local model" : "an OpenRouter model";
     return { success: false, error: `No model selected — open Settings → AI and pick ${what}.` };
   }
   const openAIShaped = cfg.provider === "openrouter" || cfg.provider === "local";
@@ -573,10 +634,11 @@ async function callClaude({ system, user, maxTokens = 2000 }) {
   try {
     let res;
     if (cfg.provider === "local") {
-      // Ollama's OpenAI-compatible endpoint. Runs locally, no auth.
+      // OpenAI-compatible endpoint: Ollama, LM Studio, llama.cpp and the rest all serve it.
+      await allowLocalOrigin(cfg.host);
       res = await fetch(`${cfg.host}/v1/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...localAuthHeaders(cfg.localKey) },
         body: JSON.stringify({
           model: cfg.model,
           max_tokens: maxTokens,
@@ -624,10 +686,11 @@ async function callClaude({ system, user, maxTokens = 2000 }) {
 
     if (!res.ok) {
       const text = await res.text();
-      let errMsg = `HTTP ${res.status}`;
+      let errMsg = cfg.provider === "local" ? localHttpError(res.status, cfg.host) : `HTTP ${res.status}`;
       try {
         const j = JSON.parse(text);
         if (j.error && j.error.message) errMsg = j.error.message;
+        else if (typeof j.error === "string" && j.error) errMsg = j.error;
       } catch {}
       return { success: false, error: errMsg };
     }
@@ -641,7 +704,7 @@ async function callClaude({ system, user, maxTokens = 2000 }) {
     return { success: true, text: content };
   } catch (e) {
     if (cfg.provider === "local") {
-      return { success: false, error: `Can't reach Ollama at ${cfg.host}. Is it running? (${e.message})` };
+      return { success: false, error: `Can't reach a model server at ${cfg.host}. Is it running? (${e.message})` };
     }
     return { success: false, error: e.message };
   }

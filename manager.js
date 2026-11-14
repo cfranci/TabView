@@ -30,6 +30,11 @@ const localSettings = document.getElementById("localSettings");
 const localModelSelect = document.getElementById("localModelSelect");
 const refreshLocalModelsBtn = document.getElementById("refreshLocalModels");
 const localStatus = document.getElementById("localStatus");
+const localHostInput = document.getElementById("localHostInput");
+const localKeyInput = document.getElementById("localKeyInput");
+const localPreset = document.getElementById("localPreset");
+const connectLocalBtn = document.getElementById("connectLocal");
+const DEFAULT_LOCAL_HOST = "http://localhost:11434";
 const promptSelect = document.getElementById("promptSelect");
 const promptText = document.getElementById("promptText");
 const savePromptBtn = document.getElementById("savePrompt");
@@ -164,6 +169,8 @@ async function loadSettings() {
     "tabview_openrouter_key",
     "tabview_openrouter_model",
     "tabview_local_model",
+    "tabview_local_host",
+    "tabview_local_key",
     "tabview_autorefresh_min",
   ]);
   let provider = data.tabview_provider;
@@ -183,6 +190,8 @@ async function loadSettings() {
   providerSelect.value = aiProvider;
   setModelSelectValue(data.tabview_openrouter_model || "");
   setLocalModelValue(data.tabview_local_model || "");
+  localHostInput.value = data.tabview_local_host || DEFAULT_LOCAL_HOST;
+  localKeyInput.placeholder = data.tabview_local_key ? "••••••••••••••• (saved)" : "Leave empty for Ollama and LM Studio";
   if (typeof data.tabview_autorefresh_min === "number") {
     autoRefreshMinutes = data.tabview_autorefresh_min;
   }
@@ -221,22 +230,24 @@ function setLocalModelValue(modelId) {
 async function refreshLocalModels() {
   refreshLocalModelsBtn.disabled = true;
   refreshLocalModelsBtn.textContent = "…";
-  localStatus.textContent = "Looking for Ollama…";
+  localStatus.textContent = "Looking for the server…";
   localStatus.className = "settings-status";
   const resp = await chrome.runtime.sendMessage({ type: "getOllamaModels" });
   refreshLocalModelsBtn.disabled = false;
   refreshLocalModelsBtn.textContent = "Refresh";
   if (!resp || !resp.success) {
-    localStatus.textContent = resp?.error || "Couldn't reach Ollama. Is it running?";
+    localStatus.textContent = resp?.error || "Couldn't reach the server. Is it running?";
     localStatus.className = "settings-status err";
-    return;
+    return false;
   }
   if (!resp.models.length) {
-    localStatus.textContent = "Ollama is running but has no models. Run: ollama pull llama3.2";
+    localStatus.textContent = resp.kind === "ollama"
+      ? "Ollama is running but has no models. Run: ollama pull llama3.2"
+      : "The server is running but has no model loaded. Load one, then press Refresh.";
     localStatus.className = "settings-status err";
-    return;
+    return false;
   }
-  const current = (await chrome.storage.local.get("tabview_local_model")).tabview_local_model || "";
+  const saved = (await chrome.storage.local.get("tabview_local_model")).tabview_local_model || "";
   localModelSelect.innerHTML = "";
   resp.models.forEach(m => {
     const opt = document.createElement("option");
@@ -244,15 +255,67 @@ async function refreshLocalModels() {
     opt.textContent = m.name;
     localModelSelect.appendChild(opt);
   });
-  const pick = current || resp.models[0].id;
+  // Keep the saved model if this server has it; otherwise (first run, or a
+  // different server) fall back to the first one it offers.
+  const pick = resp.models.some(m => m.id === saved) ? saved : resp.models[0].id;
   setLocalModelValue(pick);
-  if (!current) {
-    await chrome.storage.local.set({ tabview_local_model: pick });
-    hasLocalModel = true;
-    if (aiProvider === "local") { hasApiKey = true; updateApiKeyUI(); }
-  }
-  localStatus.textContent = `Found ${resp.models.length} local model${resp.models.length !== 1 ? "s" : ""}. Using ${pick}.`;
+  if (pick !== saved) await chrome.storage.local.set({ tabview_local_model: pick });
+  hasLocalModel = true;
+  if (aiProvider === "local") { hasApiKey = true; updateApiKeyUI(); }
+  const n = resp.models.length;
+  localStatus.textContent = `Connected to ${resp.host}. ${n} model${n !== 1 ? "s" : ""} available, using ${pick}.`;
   localStatus.className = "settings-status ok";
+  return true;
+}
+
+// A server on another machine needs the user's OK before the extension may
+// talk to it. This machine (localhost) is allowed from the start.
+async function ensureLocalHostPermission(host) {
+  const u = new URL(host);
+  if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
+  const origins = [`${u.protocol}//${u.hostname}/*`];
+  if (await chrome.permissions.contains({ origins })) return true;
+  return chrome.permissions.request({ origins });
+}
+
+function normalizeLocalHostInput(raw) {
+  let h = raw.trim() || DEFAULT_LOCAL_HOST;
+  if (!/^https?:\/\//i.test(h)) h = "http://" + h;
+  h = h.replace(/\/+$/, "").replace(/\/v1$/i, "");
+  return new URL(h).origin === "null" ? null : h; // throws on garbage
+}
+
+async function connectLocalServer() {
+  let host;
+  try { host = normalizeLocalHostInput(localHostInput.value); } catch (_) { host = null; }
+  if (!host) {
+    localStatus.textContent = "That doesn't look like an address. Example: http://localhost:11434";
+    localStatus.className = "settings-status err";
+    return;
+  }
+  localHostInput.value = host;
+  let allowed = false;
+  try { allowed = await ensureLocalHostPermission(host); } catch (_) {}
+  if (!allowed) {
+    localStatus.textContent = `TabView needs your permission to reach ${new URL(host).hostname}. Press Connect again and choose Allow.`;
+    localStatus.className = "settings-status err";
+    return;
+  }
+  const toSave = { tabview_local_host: host };
+  const key = localKeyInput.value.trim();
+  if (key) toSave.tabview_local_key = key;
+  await chrome.storage.local.set(toSave);
+  if (key) {
+    localKeyInput.value = "";
+    localKeyInput.placeholder = "••••••••••••••• (saved)";
+  }
+  // A different server has different models: stop using the old one until this connects.
+  hasLocalModel = false;
+  if (aiProvider === "local") { hasApiKey = false; updateApiKeyUI(); }
+  connectLocalBtn.disabled = true;
+  const ok = await refreshLocalModels();
+  connectLocalBtn.disabled = false;
+  if (ok) toast(`Connected to ${host}`);
 }
 
 async function refreshModels() {
@@ -374,7 +437,7 @@ function updateApiKeyUI() {
       localStatus.textContent = `✓ Using ${localModelSelect.value}`;
       localStatus.className = "settings-status ok";
     } else if (!localStatus.textContent) {
-      localStatus.textContent = "Pick a local model (click Refresh)";
+      localStatus.textContent = "Press Connect to load this server's models";
       localStatus.className = "settings-status";
     }
   }
@@ -401,7 +464,7 @@ providerSelect.addEventListener("change", async () => {
             : !!data.tabview_api_key;
   updateProviderUI();
   updateApiKeyUI();
-  const label = aiProvider === "openrouter" ? "OpenRouter" : aiProvider === "local" ? "Local (Ollama)" : "Anthropic";
+  const label = aiProvider === "openrouter" ? "OpenRouter" : aiProvider === "local" ? "Local model" : "Anthropic";
   toast(`Provider: ${label}`);
 });
 
@@ -469,6 +532,12 @@ openrouterModelSelect.addEventListener("change", async () => {
 });
 
 refreshLocalModelsBtn.addEventListener("click", refreshLocalModels);
+connectLocalBtn.addEventListener("click", connectLocalServer);
+localHostInput.addEventListener("keydown", (e) => { if (e.key === "Enter") connectLocalServer(); });
+localPreset.addEventListener("change", () => {
+  if (localPreset.value) localHostInput.value = localPreset.value;
+  localPreset.value = "";
+});
 
 localModelSelect.addEventListener("change", async () => {
   const model = localModelSelect.value;
@@ -506,7 +575,7 @@ resetPromptBtn.addEventListener("click", async () => {
 
 saveAutoRefreshBtn.addEventListener("click", async () => {
   const n = parseInt(autoRefreshInput.value, 10);
-  if (isNaN(n) || n < 0) {
+  if (isNaN(n) || n < 0 || n > 60) {
     toast("Enter a number 0-60");
     return;
   }
@@ -789,7 +858,11 @@ function renderAll() {
       nameEl.replaceWith(input);
       input.focus();
       input.select();
+      // Escape re-renders, which removes the input and fires blur. Without this
+      // flag that blur would save the edit the user just cancelled.
+      let cancelled = false;
       const save = () => {
+        if (cancelled) return;
         const newName = input.value.trim() || name;
         windowNames[win.id] = newName;
         localStorage.setItem("tabview_windowNames", JSON.stringify(windowNames));
@@ -798,7 +871,7 @@ function renderAll() {
       input.addEventListener("blur", save);
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") save();
-        if (ev.key === "Escape") renderAll();
+        if (ev.key === "Escape") { cancelled = true; renderAll(); }
       });
     });
 
@@ -825,6 +898,7 @@ function renderAll() {
 
     grid.appendChild(section);
   });
+  renderSidebar();
 }
 
 // ── Render a window's body: walk tabs in Chrome's tab-strip order, render
@@ -1572,9 +1646,9 @@ aiSuggestClosesBtn.addEventListener("click", async () => {
   }
 });
 
-function showCloseSuggestionsModal(suggestions, tabs) {
+function showCloseSuggestionsModal(suggestions, tabs, opts = {}) {
   const tabMap = new Map(tabs.map(t => [t.id, t]));
-  aiModalTitle.textContent = "✨ Suggested Closes";
+  aiModalTitle.textContent = opts.title || "✨ Suggested Closes";
 
   if (suggestions.length === 0) {
     aiModalBody.innerHTML = `<p style="color:#aaa;font-size:14px">No tabs flagged for closing. Everything looks worth keeping.</p>`;
@@ -1589,7 +1663,7 @@ function showCloseSuggestionsModal(suggestions, tabs) {
   renderAll();
 
   aiModalBody.innerHTML = `<p style="margin-bottom:14px;color:#aaa;font-size:13px">
-    AI flagged ${suggestions.length} tabs as candidates to close. Uncheck any you want to keep.
+    ${opts.intro || `AI flagged ${suggestions.length} tabs as candidates to close.`} Uncheck any you want to keep.
   </p>`;
 
   suggestions.forEach((s) => {
@@ -1917,6 +1991,9 @@ async function onDrop(e) {
   if (!targetWin) return;
   const targetTab = targetWin.tabs.find(t => t.id === parseInt(this.dataset.tabId));
   if (!targetTab) return;
+  // dragend fires while the awaits below are pending and clears the drag
+  // state, so take a copy now.
+  const src = { type: dragSrcType, id: dragSrcId, groupId: dragSrcGroupId };
 
   // Group-aware tab drops: dropping a tab onto a card that lives in a group adds
   // it to that group; dropping it onto a loose (ungrouped) card pulls it out of
@@ -1936,7 +2013,7 @@ async function onDrop(e) {
     }
   }
 
-  await moveDragged(targetWindowId, targetTab.index);
+  await moveDragged(targetWindowId, targetTab.index, src);
 }
 
 // Find a tab object by id across all windows (for group-membership checks)
@@ -1966,19 +2043,19 @@ async function joinGroup(tabId, groupId, targetWindowId) {
   }
 }
 
-async function moveDragged(targetWindowId, targetIndex) {
+async function moveDragged(targetWindowId, targetIndex, src = { type: dragSrcType, id: dragSrcId, groupId: dragSrcGroupId }) {
   try {
-    if (dragSrcType === "tab") {
-      if (dragSrcId === null) return;
-      await chrome.tabs.move(parseInt(dragSrcId), {
+    if (src.type === "tab") {
+      if (src.id === null) return;
+      await chrome.tabs.move(parseInt(src.id), {
         windowId: targetWindowId,
         index: targetIndex,
       });
       await loadAllWindows();
       toast("Tab moved");
-    } else if (dragSrcType === "group") {
-      if (dragSrcGroupId === null) return;
-      await chrome.tabGroups.move(parseInt(dragSrcGroupId), {
+    } else if (src.type === "group") {
+      if (src.groupId === null) return;
+      await chrome.tabGroups.move(parseInt(src.groupId), {
         windowId: targetWindowId,
         index: targetIndex,
       });
@@ -2085,6 +2162,244 @@ function attachGroupDragHandlers(cluster, headerEl, groupId, gtabs, windowId) {
   });
 }
 
+// ── Organize (no AI): reorder tabs so related ones sit next to each other ──
+const organizeSelect = document.getElementById("organizeSelect");
+const quickSuggestClosesBtn = document.getElementById("quickSuggestCloses");
+const orderRulesInput = document.getElementById("orderRulesText");
+const ORGANIZE_LABELS = { smart: "type and site", account: "logged-in account", project: "project" };
+let orderRulesText = TabOrganize.DEFAULT_RULES_TEXT;
+let lastOrganizeSnapshot = null; // [{ windowId, units }] as they were before the last organize
+let bulkMoving = false;
+
+chrome.storage.local.get("tabview_order_rules").then(data => {
+  if (typeof data.tabview_order_rules === "string") orderRulesText = data.tabview_order_rules;
+  orderRulesInput.value = orderRulesText;
+});
+
+// A window's unpinned tabs as movable units, in tab-strip order: a loose tab,
+// or a whole Chrome tab group (moved as one so it never gets split).
+function windowUnits(tabs) {
+  const units = [];
+  const seenGroups = new Set();
+  for (const tab of tabs.slice().sort((a, b) => a.index - b.index)) {
+    if (tab.pinned) continue;
+    if (tab.groupId !== -1) {
+      if (!seenGroups.has(tab.groupId)) {
+        seenGroups.add(tab.groupId);
+        units.push({ groupId: tab.groupId });
+      }
+    } else {
+      units.push({ tabId: tab.id });
+    }
+  }
+  return units;
+}
+
+const sameUnits = (a, b) => a.length === b.length &&
+  a.every((u, i) => u.tabId === b[i].tabId && u.groupId === b[i].groupId);
+
+// Rebuild a window's order by sending each unit to the end in turn. Appending
+// never drops a tab into the middle of a group, so groups stay intact.
+async function applyUnitOrder(units) {
+  for (const unit of units) {
+    try {
+      if (unit.groupId !== undefined) await chrome.tabGroups.move(unit.groupId, { index: -1 });
+      else await chrome.tabs.move(unit.tabId, { index: -1 });
+    } catch (_) {} // tab or group closed since the order was computed
+  }
+}
+
+async function organizeTabs(mode) {
+  const rules = TabOrganize.parseRules(orderRulesText);
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+  const everyTab = wins.flatMap(w => w.tabs);
+  const accounts = TabOrganize.detectAccounts(everyTab);
+  const projects = TabOrganize.detectProjects(everyTab);
+
+  const plans = [];
+  for (const win of wins) {
+    const before = windowUnits(win.tabs);
+    // Only loose tabs get re-sorted. Groups and the TabView tab keep their slots.
+    const sortable = win.tabs.filter(t => !t.pinned && t.groupId === -1 && t.id !== managerTabId);
+    const sorted = TabOrganize.sortTabs(sortable, mode, rules, accounts, projects);
+    let next = 0;
+    const after = before.map(u =>
+      (u.tabId !== undefined && u.tabId !== managerTabId) ? { tabId: sorted[next++].id } : u);
+    if (!sameUnits(before, after)) plans.push({ windowId: win.id, before, after });
+  }
+
+  if (plans.length === 0) {
+    toast(`Already organized by ${ORGANIZE_LABELS[mode]}`);
+    return;
+  }
+
+  bulkMoving = true;
+  try {
+    for (const plan of plans) await applyUnitOrder(plan.after);
+  } finally {
+    bulkMoving = false;
+  }
+  lastOrganizeSnapshot = plans.map(p => ({ windowId: p.windowId, units: p.before }));
+
+  // Show the result in real tab order, not a RAM / last-used ranking.
+  if (sortMode !== "default") {
+    sortMode = "default";
+    sortSelect.value = "default";
+    sortSelect.classList.remove("active");
+    localStorage.setItem("tabview_sortMode", "default");
+  }
+  await loadAllWindows();
+  const n = plans.length;
+  toast(`Organized ${n} window${n !== 1 ? "s" : ""} by ${ORGANIZE_LABELS[mode]}. Undo is in the Organize menu.`);
+}
+
+async function undoOrganize() {
+  if (!lastOrganizeSnapshot) {
+    toast("Nothing to undo");
+    return;
+  }
+  bulkMoving = true;
+  try {
+    for (const snap of lastOrganizeSnapshot) await applyUnitOrder(snap.units);
+  } finally {
+    bulkMoving = false;
+  }
+  lastOrganizeSnapshot = null;
+  await loadAllWindows();
+  toast("Tab order restored");
+}
+
+function openOrderRules() {
+  settingsPanel.classList.remove("hidden");
+  document.getElementById("orderRulesHeading").scrollIntoView({ behavior: "smooth", block: "start" });
+  orderRulesInput.focus({ preventScroll: true });
+}
+
+organizeSelect.addEventListener("change", async () => {
+  const choice = organizeSelect.value;
+  organizeSelect.value = ""; // it is a menu, not a setting
+  if (choice === "undo") return undoOrganize();
+  if (choice === "rules") return openOrderRules();
+  if (!ORGANIZE_LABELS[choice]) return;
+  organizeSelect.disabled = true;
+  try {
+    await organizeTabs(choice);
+  } catch (e) {
+    toast("Could not organize: " + e.message);
+  } finally {
+    organizeSelect.disabled = false;
+  }
+});
+
+document.getElementById("saveOrderRules").addEventListener("click", async () => {
+  orderRulesText = orderRulesInput.value;
+  await chrome.storage.local.set({ tabview_order_rules: orderRulesText });
+  const n = TabOrganize.parseRules(orderRulesText).length;
+  toast(`Saved ${n} order rule${n !== 1 ? "s" : ""}`);
+});
+
+document.getElementById("resetOrderRules").addEventListener("click", async () => {
+  orderRulesText = TabOrganize.DEFAULT_RULES_TEXT;
+  orderRulesInput.value = orderRulesText;
+  await chrome.storage.local.remove("tabview_order_rules");
+  toast("Order rules reset to default");
+});
+
+// ── Cleanup: close suggestions from plain rules, no AI ──
+quickSuggestClosesBtn.addEventListener("click", () => {
+  const tabs = allWindows.flatMap(w => w.tabs);
+  const suggestions = TabOrganize.suggestCloses(tabs);
+  showCloseSuggestionsModal(suggestions, tabs, {
+    title: "Cleanup",
+    intro: `${suggestions.length} tab${suggestions.length !== 1 ? "s look" : " looks"} safe to close: duplicates, empty tabs, old searches, and tabs untouched for a week.`,
+  });
+});
+
+// ── Sidebar: every open URL in one list ──
+const sidebar = document.getElementById("sidebar");
+const sidebarList = document.getElementById("sidebarList");
+const sidebarTitle = document.getElementById("sidebarTitle");
+const toggleSidebarBtn = document.getElementById("toggleSidebar");
+let sidebarOpen = localStorage.getItem("tabview_sidebarOpen") === "1";
+
+function setSidebarOpen(open) {
+  sidebarOpen = open;
+  localStorage.setItem("tabview_sidebarOpen", open ? "1" : "0");
+  sidebar.classList.toggle("hidden", !open);
+  document.body.classList.toggle("sidebar-open", open);
+  toggleSidebarBtn.classList.toggle("active", open);
+  renderSidebar();
+}
+
+// Tabs the sidebar lists: same windows and search filter as the grid.
+function sidebarTabs() {
+  return getSortedWindows().map(win => ({
+    win,
+    tabs: win.tabs.filter(tabMatchesSearch).sort((a, b) => a.index - b.index),
+  })).filter(g => g.tabs.length > 0);
+}
+
+function renderSidebar() {
+  if (!sidebarOpen) return;
+  const groups = sidebarTabs();
+  const total = groups.reduce((sum, g) => sum + g.tabs.length, 0);
+  sidebarTitle.textContent = `Open tabs (${total})`;
+  sidebarList.innerHTML = "";
+  if (total === 0) {
+    sidebarList.innerHTML = `<p class="sidebar-empty">No tabs match your search.</p>`;
+    return;
+  }
+  const accounts = TabOrganize.detectAccounts(allWindows.flatMap(w => w.tabs));
+
+  for (const { win, tabs } of groups) {
+    const isCurrent = win.id === managerWindowId;
+    const heading = document.createElement("div");
+    heading.className = "sidebar-window";
+    heading.textContent = `${windowNames[win.id] || (isCurrent ? "Current Window" : "Window")} · ${tabs.length}`;
+    sidebarList.appendChild(heading);
+
+    for (const tab of tabs) {
+      const account = accounts.get(tab.id);
+      const row = document.createElement("div");
+      row.className = "sidebar-row" + (tab.discarded ? " paused" : "");
+      row.title = tab.url || "";
+      const shortUrl = (tab.url || "").replace(/^https?:\/\/(www\.)?/, "");
+      row.innerHTML = `
+        ${tab.favIconUrl ? `<img src="${escapeHtml(tab.favIconUrl)}" alt="">` : `<span class="sidebar-noicon"></span>`}
+        <div class="sidebar-text">
+          <div class="sidebar-title">${escapeHtml(tab.title || tab.url)}</div>
+          <div class="sidebar-url">${account ? `<span class="sidebar-account">${escapeHtml(account)}</span> · ` : ""}${escapeHtml(shortUrl)}</div>
+        </div>
+        <button class="sidebar-close" title="Close this tab">&times;</button>
+      `;
+      const img = row.querySelector("img");
+      if (img) img.addEventListener("error", () => img.replaceWith(Object.assign(document.createElement("span"), { className: "sidebar-noicon" })));
+      row.addEventListener("click", () => {
+        chrome.tabs.update(tab.id, { active: true });
+        chrome.windows.update(win.id, { focused: true });
+      });
+      row.querySelector(".sidebar-close").addEventListener("click", (e) => {
+        e.stopPropagation();
+        chrome.tabs.remove(tab.id).catch(() => {});
+      });
+      sidebarList.appendChild(row);
+    }
+  }
+}
+
+toggleSidebarBtn.addEventListener("click", () => setSidebarOpen(!sidebarOpen));
+document.getElementById("sidebarClose").addEventListener("click", () => setSidebarOpen(false));
+document.getElementById("sidebarCopy").addEventListener("click", async () => {
+  const urls = sidebarTabs().flatMap(g => g.tabs.map(t => t.url)).filter(Boolean);
+  try {
+    await navigator.clipboard.writeText(urls.join("\n"));
+    toast(`Copied ${urls.length} URL${urls.length !== 1 ? "s" : ""}`);
+  } catch (_) {
+    toast("Could not copy to the clipboard");
+  }
+});
+setSidebarOpen(sidebarOpen);
+
 // ── Helpers ──
 function escapeHtml(str) {
   const d = document.createElement("div");
@@ -2110,7 +2425,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
 });
 chrome.tabs.onCreated.addListener(() => loadAllWindows());
-chrome.tabs.onMoved.addListener(() => loadAllWindows());
+chrome.tabs.onMoved.addListener(() => { if (!bulkMoving) loadAllWindows(); });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.groupId !== undefined || changeInfo.title || changeInfo.discarded !== undefined) {
     loadAllWindows();
