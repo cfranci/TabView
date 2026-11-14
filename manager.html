@@ -13,6 +13,7 @@
     <button id="updateDismiss" class="update-dismiss" title="Dismiss">✕</button>
   </div>
   <header>
+    <button id="toggleSidebar" class="icon-btn sidebar-toggle" title="Show or hide the list of every open URL">☰</button>
     <h1>TabView</h1>
     <div class="search-wrapper">
       <div class="search-row">
@@ -28,6 +29,15 @@
         <option value="lastused">↕ Last used: oldest first</option>
         <option value="lastused-new">↕ Last used: newest first</option>
       </select>
+      <select id="organizeSelect" class="sort-select" title="Reorder tabs so related ones sit next to each other. No AI, no Chrome tab groups.">
+        <option value="">⇅ Organize…</option>
+        <option value="smart">By type and site</option>
+        <option value="account">By logged-in account</option>
+        <option value="project">By project</option>
+        <option value="undo">↩ Undo last organize</option>
+        <option value="rules">✎ Edit order rules…</option>
+      </select>
+      <button id="quickSuggestCloses" title="Find duplicates, empty tabs, old searches, and tabs you have not opened in a week. No AI.">Cleanup</button>
       <button id="aiAutoGroup" class="ai-btn" title="Use AI to auto-group all tabs by topic">✨ Auto-Group</button>
       <button id="aiSuggestCloses" class="ai-btn" title="Use AI to suggest tabs you can close">✨ Suggest Closes</button>
       <button id="toggleSessions" title="Saved sessions &amp; crash recovery">Sessions</button>
@@ -115,6 +125,14 @@
       </div>
       <p class="settings-status" id="promptStatus"></p>
 
+      <h3 id="orderRulesHeading" style="margin-top:24px">Tab Order Rules</h3>
+      <p class="settings-hint">Tabs matching these rules always come first when you Organize, in the order listed. One rule per line: a name, a colon, then words to look for in the tab's URL or title, separated by commas. Example: <code>Work: ready-app.com, readyapp</code></p>
+      <textarea id="orderRulesText" rows="5" spellcheck="false" style="width:100%; margin-top:8px; box-sizing:border-box; resize:vertical; font-family:ui-monospace, Menlo, monospace; font-size:13px; line-height:1.5; padding:10px; border-radius:8px; border:1px solid #333; background:#1a1a1a; color:#e6e6e6;"></textarea>
+      <div class="settings-row" style="margin-top:8px">
+        <button id="saveOrderRules">Save rules</button>
+        <button id="resetOrderRules" class="settings-danger">Reset to default</button>
+      </div>
+
       <h3 style="margin-top:24px">Preview Auto-Refresh</h3>
       <p class="settings-hint">Re-capture previews when you return to TabView after this many minutes away:</p>
       <div class="settings-row">
@@ -142,6 +160,15 @@
       </div>
     </div>
   </div>
+
+  <aside id="sidebar" class="sidebar hidden">
+    <div class="sidebar-header">
+      <span id="sidebarTitle">Open tabs</span>
+      <button id="sidebarCopy" title="Copy every listed URL to the clipboard">Copy URLs</button>
+      <button id="sidebarClose" class="sidebar-x" title="Hide this list">&times;</button>
+    </div>
+    <div id="sidebarList" class="sidebar-list"></div>
+  </aside>
 
   <div id="grid"></div>
 
@@ -239,6 +266,15 @@
           <li><b>Close Group</b> — close every tab in the group</li>
         </ul>
 
+        <h3 class="help-h3">Organize and clean up (no AI needed)</h3>
+        <ul class="help-list">
+          <li><b>⇅ Organize</b> — reorders the tabs in each window so related ones sit next to each other, without making Chrome tab groups. Choose by type and site, by logged-in account, or by project. Pinned tabs and existing tab groups are left alone</li>
+          <li><b>Order rules</b> — tabs you always want first (Gmail by default), in the order you list them. Edit under Organize → Edit order rules</li>
+          <li><b>Undo last organize</b> — puts the tabs back where they were</li>
+          <li><b>Cleanup</b> — suggests tabs to close: duplicates, empty new tabs, old search results, and anything not opened in a week</li>
+          <li><b>☰</b> (top left) — a side list of every open URL; click a row to jump to it, × to close it, Copy URLs to copy them all</li>
+        </ul>
+
         <h3 class="help-h3">AI features (require an Anthropic API key in Settings)</h3>
         <ul class="help-list">
           <li><b>✨ Auto-Group</b> — Claude proposes 2-7 named groups based on tab topics; you review/edit before applying</li>
@@ -273,6 +309,7 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <script src="organize.js"></script>
   <script src="manager.js"></script>
 </body>
 </html>

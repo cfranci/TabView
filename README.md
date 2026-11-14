@@ -91,6 +91,18 @@ Check the box on the top-left of any tab card to select it. A floating action ba
 ### Merge windows
 Click **Merge Windows** in the header to pull every tab from all other Chrome windows into the current window.
 
+## Tests
+
+```bash
+cd tests
+npm install        # once; installs Playwright
+npm test           # unit tests, then browser tests
+```
+
+- `tests/unit` covers the organizer logic in `organize.js` (ordering, account and project detection, close suggestions).
+- `tests/e2e` loads the unpacked extension in headless Chromium and drives the real manager page against local fixture pages: rendering, captures, search, sorting, selection, grouping, windows, drag and drop, sessions, settings, the organizer, Cleanup, the sidebar, and the AI features (answered by a fake local model server, so no key is needed).
+- Tab discarding is stubbed in the browser tests: really discarding a tab crashes Chromium while a test driver is attached to it.
+
 ## Permissions
 
 | Permission | Purpose |

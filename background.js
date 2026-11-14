@@ -196,7 +196,8 @@ async function fetchOpenrouterModels() {
 
 // List models installed in the local Ollama instance (/api/tags).
 async function fetchOllamaModels(host) {
-  const base = host || "http://localhost:11434";
+  // Same host the chat calls use, so the model list and the model run against one server.
+  const base = host || (await chrome.storage.local.get("tabview_local_host")).tabview_local_host || OLLAMA_DEFAULT_HOST;
   try {
     const res = await fetch(`${base}/api/tags`);
     if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
