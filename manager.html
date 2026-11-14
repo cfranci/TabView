@@ -62,7 +62,7 @@
         <select id="providerSelect">
           <option value="anthropic">Anthropic (direct)</option>
           <option value="openrouter">OpenRouter</option>
-          <option value="local">Local (Ollama)</option>
+          <option value="local">Local model (Ollama, LM Studio, …)</option>
         </select>
       </div>
 
@@ -97,11 +97,27 @@
       </div>
 
       <div id="localSettings" class="hidden">
-        <p class="settings-hint">Runs fully on your machine with <span class="settings-link" data-url="https://ollama.com">Ollama</span>. No key, no usage cost, nothing leaves your computer. Start Ollama and pull a model first (for example <code>ollama pull llama3.2</code>).</p>
-        <label for="localModelSelect" style="margin-top:6px">Model</label>
+        <p class="settings-hint">Use a model running on your own machine or network. No usage cost, and with a local server nothing leaves your computer. Works with <span class="settings-link" data-url="https://ollama.com">Ollama</span>, <span class="settings-link" data-url="https://lmstudio.ai">LM Studio</span>, llama.cpp, Jan, and any other server that speaks the OpenAI API.</p>
+        <label for="localHostInput" style="margin-top:6px">Server address</label>
+        <div class="settings-row">
+          <select id="localPreset" title="Fill in the usual address for a common local server">
+            <option value="">Presets…</option>
+            <option value="http://localhost:11434">Ollama</option>
+            <option value="http://localhost:1234">LM Studio</option>
+            <option value="http://localhost:8080">llama.cpp server</option>
+            <option value="http://localhost:1337">Jan</option>
+          </select>
+          <input type="text" id="localHostInput" placeholder="http://localhost:11434" spellcheck="false" style="flex:1; min-width:0;">
+          <button id="connectLocal">Connect</button>
+        </div>
+        <label for="localKeyInput" style="margin-top:10px">API key <span style="font-weight:400;color:#777">(optional, only if your server asks for one)</span></label>
+        <div class="settings-row">
+          <input type="password" id="localKeyInput" placeholder="Leave empty for Ollama and LM Studio" autocomplete="off">
+        </div>
+        <label for="localModelSelect" style="margin-top:10px">Model</label>
         <div class="settings-row">
           <select id="localModelSelect" style="flex:1; min-width:0;">
-            <option value="">Click Refresh to load installed models…</option>
+            <option value="">Connect to load the server's models…</option>
           </select>
           <button id="refreshLocalModels">Refresh</button>
         </div>
@@ -275,12 +291,13 @@
           <li><b>☰</b> (top left) — a side list of every open URL; click a row to jump to it, × to close it, Copy URLs to copy them all</li>
         </ul>
 
-        <h3 class="help-h3">AI features (require an Anthropic API key in Settings)</h3>
+        <h3 class="help-h3">AI features (need a provider in Settings: Anthropic, OpenRouter, or a local model)</h3>
         <ul class="help-list">
           <li><b>✨ Auto-Group</b> — Claude proposes 2-7 named groups based on tab topics; you review/edit before applying</li>
           <li><b>✨ Suggest Closes</b> — Claude flags duplicate, stale, or one-off tabs with reasoning</li>
           <li><b>✨ AI toggle on search</b> — type a natural-language query, hit Enter; top matches get a rank badge</li>
           <li><b>Hover summaries</b> — 1-line AI summary on hover (cached per tab)</li>
+          <li><b>Local models</b> — in Settings choose Local model, enter your server's address (Ollama, LM Studio, llama.cpp, Jan, or any OpenAI-compatible server, on this machine or another one), press Connect, and pick a model</li>
         </ul>
 
         <h3 class="help-h3">Other controls</h3>
@@ -292,7 +309,7 @@
           <li><b>Auto-refresh previews</b> — when you come back to TabView after N minutes away (configurable in Settings)</li>
           <li><b>Merge Windows</b> — collapse every Chrome window into one</li>
           <li><b>↻ Refresh All Captures</b> — re-capture a fresh screenshot of every tab on demand</li>
-          <li><b>⚙ Settings</b> — set Anthropic API key and auto-refresh interval</li>
+          <li><b>⚙ Settings</b> — pick the AI provider (Anthropic, OpenRouter, or a local model), edit order rules, and set the auto-refresh interval</li>
         </ul>
 
         <h3 class="help-h3">Keyboard shortcuts</h3>

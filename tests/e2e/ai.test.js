@@ -104,7 +104,7 @@ test("Local provider: Refresh lists installed models, picks the first, and enabl
   await h.page.selectOption("#providerSelect", "local");
   assert.equal(await h.page.locator("#aiAutoGroup").isDisabled(), true);
   await h.page.click("#refreshLocalModels");
-  await h.until(async () => /Found 2 local models\. Using another:7b\./.test(await h.page.locator("#localStatus").textContent()), "model list");
+  await h.until(async () => /2 models available, using another:7b\./.test(await h.page.locator("#localStatus").textContent()), "model list");
   assert.deepEqual(await h.page.locator("#localModelSelect option").allTextContents(), ["another:7b", "fake-model:latest"]);
   assert.equal(await h.getStorage("tabview_local_model"), "another:7b");
   assert.equal(await h.page.locator("#aiAutoGroup").isDisabled(), false);
@@ -117,7 +117,7 @@ test("Local provider: Refresh lists installed models, picks the first, and enabl
 test("Local provider: an unreachable server gives a readable error", async () => {
   const r = await h.send({ type: "getOllamaModels", host: "http://127.0.0.1:1" });
   assert.equal(r.success, false);
-  assert.match(r.error, /Can't reach Ollama at http:\/\/127\.0\.0\.1:1/);
+  assert.match(r.error, /Can't reach a model server at http:\/\/127\.0\.0\.1:1/);
 });
 
 test("Auto-Group proposes groups, drops undersized ones, and Apply creates them in Chrome", async () => {
@@ -264,7 +264,7 @@ test("an unreachable local model gives a readable error", async () => {
   await h.setStorage({ tabview_local_host: "http://127.0.0.1:1" });
   const r = await h.send({ type: "aiTabSummary", tab: { id: 1, title: "x", url: "https://x.com" } });
   assert.equal(r.success, false);
-  assert.match(r.error, /Can't reach Ollama at http:\/\/127\.0\.0\.1:1/);
+  assert.match(r.error, /Can't reach a model server at http:\/\/127\.0\.0\.1:1/);
   await h.setStorage({ tabview_local_host: h.base });
 });
 

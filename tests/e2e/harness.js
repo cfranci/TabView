@@ -15,9 +15,26 @@ function startServer() {
   const llmCalls = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
+    const isModelApi = ["/api/tags", "/v1/models", "/v1/chat/completions"].includes(url.pathname);
+    if (isModelApi) {
+      server.apiRequests.push({ path: url.pathname, origin: req.headers.origin, authorization: req.headers.authorization });
+      // Behave like real servers: Ollama refuses extension origins, some servers want a key.
+      if ((req.headers.origin || "").startsWith("chrome-extension://") || server.forbid) {
+        res.writeHead(403); return res.end();
+      }
+      if (server.requireKey && req.headers.authorization !== `Bearer ${server.requireKey}`) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: "unauthorized" }));
+      }
+    }
+    const json = (code, body) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
     if (url.pathname === "/api/tags") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ models: [{ name: "fake-model:latest" }, { name: "another:7b" }] }));
+      // kind "openai" plays LM Studio / llama.cpp, which have no Ollama listing.
+      if (server.kind === "openai") { res.writeHead(404); return res.end(); }
+      return json(200, { models: server.models.map(name => ({ name })) });
+    }
+    if (url.pathname === "/v1/models") {
+      return json(200, { object: "list", data: server.models.map(id => ({ id, object: "model" })) });
     }
     if (url.pathname === "/v1/chat/completions") {
       let body = "";
@@ -61,6 +78,15 @@ function startServer() {
   });
   server.llmCalls = llmCalls;
   server.llmMode = "ok";
+  server.apiRequests = [];
+  server.resetModelServer = () => {
+    server.kind = "ollama";
+    server.models = ["fake-model:latest", "another:7b"];
+    server.requireKey = null;
+    server.forbid = false;
+    server.apiRequests.length = 0;
+  };
+  server.resetModelServer();
   return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server)));
 }
 

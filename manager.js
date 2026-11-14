@@ -30,6 +30,11 @@ const localSettings = document.getElementById("localSettings");
 const localModelSelect = document.getElementById("localModelSelect");
 const refreshLocalModelsBtn = document.getElementById("refreshLocalModels");
 const localStatus = document.getElementById("localStatus");
+const localHostInput = document.getElementById("localHostInput");
+const localKeyInput = document.getElementById("localKeyInput");
+const localPreset = document.getElementById("localPreset");
+const connectLocalBtn = document.getElementById("connectLocal");
+const DEFAULT_LOCAL_HOST = "http://localhost:11434";
 const promptSelect = document.getElementById("promptSelect");
 const promptText = document.getElementById("promptText");
 const savePromptBtn = document.getElementById("savePrompt");
@@ -164,6 +169,8 @@ async function loadSettings() {
     "tabview_openrouter_key",
     "tabview_openrouter_model",
     "tabview_local_model",
+    "tabview_local_host",
+    "tabview_local_key",
     "tabview_autorefresh_min",
   ]);
   let provider = data.tabview_provider;
@@ -183,6 +190,8 @@ async function loadSettings() {
   providerSelect.value = aiProvider;
   setModelSelectValue(data.tabview_openrouter_model || "");
   setLocalModelValue(data.tabview_local_model || "");
+  localHostInput.value = data.tabview_local_host || DEFAULT_LOCAL_HOST;
+  localKeyInput.placeholder = data.tabview_local_key ? "••••••••••••••• (saved)" : "Leave empty for Ollama and LM Studio";
   if (typeof data.tabview_autorefresh_min === "number") {
     autoRefreshMinutes = data.tabview_autorefresh_min;
   }
@@ -221,22 +230,24 @@ function setLocalModelValue(modelId) {
 async function refreshLocalModels() {
   refreshLocalModelsBtn.disabled = true;
   refreshLocalModelsBtn.textContent = "…";
-  localStatus.textContent = "Looking for Ollama…";
+  localStatus.textContent = "Looking for the server…";
   localStatus.className = "settings-status";
   const resp = await chrome.runtime.sendMessage({ type: "getOllamaModels" });
   refreshLocalModelsBtn.disabled = false;
   refreshLocalModelsBtn.textContent = "Refresh";
   if (!resp || !resp.success) {
-    localStatus.textContent = resp?.error || "Couldn't reach Ollama. Is it running?";
+    localStatus.textContent = resp?.error || "Couldn't reach the server. Is it running?";
     localStatus.className = "settings-status err";
-    return;
+    return false;
   }
   if (!resp.models.length) {
-    localStatus.textContent = "Ollama is running but has no models. Run: ollama pull llama3.2";
+    localStatus.textContent = resp.kind === "ollama"
+      ? "Ollama is running but has no models. Run: ollama pull llama3.2"
+      : "The server is running but has no model loaded. Load one, then press Refresh.";
     localStatus.className = "settings-status err";
-    return;
+    return false;
   }
-  const current = (await chrome.storage.local.get("tabview_local_model")).tabview_local_model || "";
+  const saved = (await chrome.storage.local.get("tabview_local_model")).tabview_local_model || "";
   localModelSelect.innerHTML = "";
   resp.models.forEach(m => {
     const opt = document.createElement("option");
@@ -244,15 +255,67 @@ async function refreshLocalModels() {
     opt.textContent = m.name;
     localModelSelect.appendChild(opt);
   });
-  const pick = current || resp.models[0].id;
+  // Keep the saved model if this server has it; otherwise (first run, or a
+  // different server) fall back to the first one it offers.
+  const pick = resp.models.some(m => m.id === saved) ? saved : resp.models[0].id;
   setLocalModelValue(pick);
-  if (!current) {
-    await chrome.storage.local.set({ tabview_local_model: pick });
-    hasLocalModel = true;
-    if (aiProvider === "local") { hasApiKey = true; updateApiKeyUI(); }
-  }
-  localStatus.textContent = `Found ${resp.models.length} local model${resp.models.length !== 1 ? "s" : ""}. Using ${pick}.`;
+  if (pick !== saved) await chrome.storage.local.set({ tabview_local_model: pick });
+  hasLocalModel = true;
+  if (aiProvider === "local") { hasApiKey = true; updateApiKeyUI(); }
+  const n = resp.models.length;
+  localStatus.textContent = `Connected to ${resp.host}. ${n} model${n !== 1 ? "s" : ""} available, using ${pick}.`;
   localStatus.className = "settings-status ok";
+  return true;
+}
+
+// A server on another machine needs the user's OK before the extension may
+// talk to it. This machine (localhost) is allowed from the start.
+async function ensureLocalHostPermission(host) {
+  const u = new URL(host);
+  if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
+  const origins = [`${u.protocol}//${u.hostname}/*`];
+  if (await chrome.permissions.contains({ origins })) return true;
+  return chrome.permissions.request({ origins });
+}
+
+function normalizeLocalHostInput(raw) {
+  let h = raw.trim() || DEFAULT_LOCAL_HOST;
+  if (!/^https?:\/\//i.test(h)) h = "http://" + h;
+  h = h.replace(/\/+$/, "").replace(/\/v1$/i, "");
+  return new URL(h).origin === "null" ? null : h; // throws on garbage
+}
+
+async function connectLocalServer() {
+  let host;
+  try { host = normalizeLocalHostInput(localHostInput.value); } catch (_) { host = null; }
+  if (!host) {
+    localStatus.textContent = "That doesn't look like an address. Example: http://localhost:11434";
+    localStatus.className = "settings-status err";
+    return;
+  }
+  localHostInput.value = host;
+  let allowed = false;
+  try { allowed = await ensureLocalHostPermission(host); } catch (_) {}
+  if (!allowed) {
+    localStatus.textContent = `TabView needs your permission to reach ${new URL(host).hostname}. Press Connect again and choose Allow.`;
+    localStatus.className = "settings-status err";
+    return;
+  }
+  const toSave = { tabview_local_host: host };
+  const key = localKeyInput.value.trim();
+  if (key) toSave.tabview_local_key = key;
+  await chrome.storage.local.set(toSave);
+  if (key) {
+    localKeyInput.value = "";
+    localKeyInput.placeholder = "••••••••••••••• (saved)";
+  }
+  // A different server has different models: stop using the old one until this connects.
+  hasLocalModel = false;
+  if (aiProvider === "local") { hasApiKey = false; updateApiKeyUI(); }
+  connectLocalBtn.disabled = true;
+  const ok = await refreshLocalModels();
+  connectLocalBtn.disabled = false;
+  if (ok) toast(`Connected to ${host}`);
 }
 
 async function refreshModels() {
@@ -374,7 +437,7 @@ function updateApiKeyUI() {
       localStatus.textContent = `✓ Using ${localModelSelect.value}`;
       localStatus.className = "settings-status ok";
     } else if (!localStatus.textContent) {
-      localStatus.textContent = "Pick a local model (click Refresh)";
+      localStatus.textContent = "Press Connect to load this server's models";
       localStatus.className = "settings-status";
     }
   }
@@ -401,7 +464,7 @@ providerSelect.addEventListener("change", async () => {
             : !!data.tabview_api_key;
   updateProviderUI();
   updateApiKeyUI();
-  const label = aiProvider === "openrouter" ? "OpenRouter" : aiProvider === "local" ? "Local (Ollama)" : "Anthropic";
+  const label = aiProvider === "openrouter" ? "OpenRouter" : aiProvider === "local" ? "Local model" : "Anthropic";
   toast(`Provider: ${label}`);
 });
 
@@ -469,6 +532,12 @@ openrouterModelSelect.addEventListener("change", async () => {
 });
 
 refreshLocalModelsBtn.addEventListener("click", refreshLocalModels);
+connectLocalBtn.addEventListener("click", connectLocalServer);
+localHostInput.addEventListener("keydown", (e) => { if (e.key === "Enter") connectLocalServer(); });
+localPreset.addEventListener("change", () => {
+  if (localPreset.value) localHostInput.value = localPreset.value;
+  localPreset.value = "";
+});
 
 localModelSelect.addEventListener("change", async () => {
   const model = localModelSelect.value;
