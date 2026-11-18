@@ -1016,9 +1016,9 @@ function createTabCard(tab, index, windowId) {
   const previewAge = previewTimestamps[tab.id] ? (Date.now() - previewTimestamps[tab.id]) : null;
   const isStale = previewAge !== null && previewAge > 30 * 60 * 1000; // 30 min
   const previewHtml = preview
-    ? `<img src="${preview}" alt="Preview">${isStale ? `<span class="preview-stale-tag">stale</span>` : ""}`
+    ? `<img src="${escapeHtml(preview)}" alt="Preview">${isStale ? `<span class="preview-stale-tag">stale</span>` : ""}`
     : `<div class="placeholder">
-         ${tab.favIconUrl ? `<img src="${tab.favIconUrl}" alt="">` : ""}
+         ${tab.favIconUrl ? `<img src="${escapeHtml(tab.favIconUrl)}" alt="">` : ""}
          <span>Capturing...</span>
        </div>`;
 
@@ -1053,7 +1053,7 @@ function createTabCard(tab, index, windowId) {
     ${pausedBadge}
     ${idleBadge}
     <div class="info">
-      ${tab.favIconUrl ? `<img class="favicon" src="${tab.favIconUrl}" alt="">` : ""}
+      ${tab.favIconUrl ? `<img class="favicon" src="${escapeHtml(tab.favIconUrl)}" alt="">` : ""}
       <span class="title" title="${escapeHtml(tab.url || "")}">${displayTitle}</span>
       <span class="ram-badge${memHigh ? " ram-high" : ""}">${memText}</span>
     </div>
@@ -2404,7 +2404,9 @@ setSidebarOpen(sidebarOpen);
 function escapeHtml(str) {
   const d = document.createElement("div");
   d.textContent = str == null ? "" : str;
-  return d.innerHTML;
+  // textContent->innerHTML escapes < > & only; also escape quotes so the
+  // result is safe inside quoted HTML attributes (title="", src="", value="").
+  return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function toast(msg) {
