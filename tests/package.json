@@ -5,7 +5,8 @@
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node --test \"unit/*.test.js\"",
-    "test:e2e": "node --test --test-concurrency=2 \"e2e/*.test.js\""
+    "test:e2e": "node --test --test-concurrency=2 \"e2e/*.test.js\"",
+    "pretest:e2e": "playwright install chromium"
   },
   "devDependencies": {
     "playwright": "1.60.0"
