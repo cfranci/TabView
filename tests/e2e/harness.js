@@ -90,16 +90,32 @@ function startServer() {
   return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server)));
 }
 
+// Close the fixture server, dropping keep-alive sockets so close() resolves.
+function stopServer(server) {
+  server.closeAllConnections?.();
+  return new Promise(r => server.close(() => r()));
+}
+
 async function launch() {
   const server = await startServer();
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "tabview-test-"));
-  const ctx = await chromium.launchPersistentContext(profile, {
-    channel: "chromium",
-    headless: true,
-    viewport: { width: 1500, height: 900 },
-    args: [`--disable-extensions-except=${EXT_DIR}`, `--load-extension=${EXT_DIR}`],
-  });
+  let ctx;
+  try {
+    ctx = await chromium.launchPersistentContext(profile, {
+      channel: "chromium",
+      headless: true,
+      viewport: { width: 1500, height: 900 },
+      args: [`--disable-extensions-except=${EXT_DIR}`, `--load-extension=${EXT_DIR}`],
+    });
+  } catch (e) {
+    // Without this, a failed launch (e.g. browser not installed: run
+    // `npx playwright install chromium`) leaves the fixture server listening
+    // and the test process never exits.
+    await stopServer(server);
+    fs.rmSync(profile, { recursive: true, force: true });
+    throw e;
+  }
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent("serviceworker", { timeout: 20000 });
   const extId = sw.url().split("/")[2];
   const managerUrl = `chrome-extension://${extId}/manager.html`;
@@ -223,8 +239,9 @@ async function launch() {
     send: msg => page.evaluate(m => chrome.runtime.sendMessage(m), msg),
 
     async close() {
-      await ctx.close();
-      await new Promise(r => server.close(r));
+      // Always stop the server and clean up, even if the browser is already gone.
+      try { await ctx.close(); } catch {}
+      await stopServer(server);
       fs.rmSync(profile, { recursive: true, force: true });
     },
   };
